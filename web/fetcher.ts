@@ -136,13 +136,13 @@ export class ChecksFetcher implements ChecksProvider {
       }
       const data = await response.json();
       for (const run of data.runs) {
-        const warningResults = await this.buildWarnings(jenkins, run.statusLink);
-        if (warningResults.length) {
-          run.results.push(...warningResults);
+        const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink);
+        if (runWarningResults.length) {
+          checkRuns.push(...runWarningResults);
         }
-        const testResults = await this.buildTestResults(jenkins, run.statusLink);
-        if (testResults.length) {
-          run.results.push(...testResults);
+        const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink);
+        if (runTestResults.length) {
+          checkRuns.push(...runTestResults);
         }
         checkRuns.push(this.convert(jenkins, run));
       };
@@ -186,13 +186,14 @@ export class ChecksFetcher implements ChecksProvider {
     return TagColor.GRAY;
   }
 
-  async buildWarnings(jenkins: Config, statusLink: string) {
+  async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string) {
     const toolsResult = await this.fetchFromJenkins(jenkins, `${statusLink}warnings-ng/api/json`);
     if (!toolsResult.ok) {
       return [];
     }
 
     const toolsInfo: AnalysisResponse = await toolsResult.json();
+    const checkRuns: CheckRun[] = [];
     const results: CheckResult[] = [];
     for (const tool of toolsInfo.tools) {
       if (tool.size == 0) {
@@ -232,12 +233,22 @@ export class ChecksFetcher implements ChecksProvider {
           }]
         });
       }
+
+      checkRuns.push({
+          change: changeData.changeNumber,
+          patchset: changeData.patchsetNumber,
+          checkName: `${tool.name}`,
+          status: RunStatus.COMPLETED,
+          statusLink: `${tool.latestUrl}`,
+          actions: [],
+          results: results,
+        })
     }
 
-    return results;
+    return checkRuns;
   }
 
-  async buildTestResults(jenkins: Config, statusLink: string) {
+  async buildTestResults(jenkins: Config, changeData: ChangeData, statusLink: string) {
     interface TestCase {
       className: string;
       errorDetails: string | null;
@@ -265,6 +276,7 @@ export class ChecksFetcher implements ChecksProvider {
       suite.cases
         .filter(test => test.status === 'FAILED')
         .map(test => ({
+          show_on_unchanged_lines: false,
           category: Category.ERROR,
           message: test.errorDetails ?? undefined,
           summary: `${test.className}.${test.name}`
@@ -272,8 +284,18 @@ export class ChecksFetcher implements ChecksProvider {
     );
 
     results.push(...failedTests);
+    const checkRuns: CheckRun[] = [];
+    checkRuns.push({
+      change: changeData.changeNumber,
+      patchset: changeData.patchsetNumber,
+      checkName: "JUnit",
+      status: RunStatus.COMPLETED,
+      statusLink: `${statusLink}testReport`,
+      actions: [],
+      results: results,
+    })
 
-    return results;
+    return checkRuns;
   }
 
   fetchConfig(changeData: ChangeData): Promise<Config[]> {
