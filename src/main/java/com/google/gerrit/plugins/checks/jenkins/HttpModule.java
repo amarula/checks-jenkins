@@ -24,5 +24,7 @@ public class HttpModule extends ServletModule {
   protected void configureServlets() {
     DynamicSet.bind(binder(), WebUiPlugin.class)
         .toInstance(new JavaScriptPlugin("checks-jenkins.js"));
+
+    serve("/proxy-trigger").with(JenkinsProxyServlet.class);
   }
 }
