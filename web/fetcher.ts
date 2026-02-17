@@ -136,13 +136,15 @@ export class ChecksFetcher implements ChecksProvider {
       }
       const data = await response.json();
       for (const run of data.runs) {
-        const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink);
-        if (runWarningResults.length) {
-          checkRuns.push(...runWarningResults);
-        }
-        const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink);
-        if (runTestResults.length) {
-          checkRuns.push(...runTestResults);
+        if (run.status === RunStatus.COMPLETED) {
+          const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink);
+          if (runWarningResults.length) {
+            checkRuns.push(...runWarningResults);
+          }
+          const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink);
+          if (runTestResults.length) {
+            checkRuns.push(...runTestResults);
+          }
         }
         checkRuns.push(this.convert(jenkins, run));
       };
