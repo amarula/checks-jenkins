@@ -198,10 +198,6 @@ export class ChecksFetcher implements ChecksProvider {
     const checkRuns: CheckRun[] = [];
     const results: CheckResult[] = [];
     for (const tool of toolsInfo.tools) {
-      if (tool.size == 0) {
-        continue;
-      }
-
       const toolResult = await this.fetchFromJenkins(jenkins, `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`);
       if (!toolResult.ok) {
         continue;
