@@ -196,13 +196,14 @@ export class ChecksFetcher implements ChecksProvider {
 
     const toolsInfo: AnalysisResponse = await toolsResult.json();
     const checkRuns: CheckRun[] = [];
-    const results: CheckResult[] = [];
+
     for (const tool of toolsInfo.tools) {
       const toolResult = await this.fetchFromJenkins(jenkins, `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`);
       if (!toolResult.ok) {
         continue;
       }
       const warnings: AnalysisReport = await toolResult.json();
+      let results: CheckResult[] = [];
 
       for (const issue of warnings.issues) {
         results.push({
@@ -233,14 +234,16 @@ export class ChecksFetcher implements ChecksProvider {
       }
 
       checkRuns.push({
-          change: changeData.changeNumber,
-          patchset: changeData.patchsetNumber,
-          checkName: `${tool.name}`,
-          status: RunStatus.COMPLETED,
-          statusLink: `${tool.latestUrl}`,
-          actions: [],
-          results: results,
-        })
+        change: changeData.changeNumber,
+        patchset: changeData.patchsetNumber,
+        checkName: `${tool.name}`,
+        status: RunStatus.COMPLETED,
+        statusLink: `${tool.latestUrl}`,
+        actions: [],
+        results: results.slice(),
+      })
+
+      results = [];
     }
 
     return checkRuns;
