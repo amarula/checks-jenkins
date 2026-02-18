@@ -137,11 +137,11 @@ export class ChecksFetcher implements ChecksProvider {
       const data = await response.json();
       for (const run of data.runs) {
         if (run.status === RunStatus.COMPLETED) {
-          const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink);
+          const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt);
           if (runWarningResults.length) {
             checkRuns.push(...runWarningResults);
           }
-          const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink);
+          const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt);
           if (runTestResults.length) {
             checkRuns.push(...runTestResults);
           }
@@ -188,7 +188,7 @@ export class ChecksFetcher implements ChecksProvider {
     return TagColor.GRAY;
   }
 
-  async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string) {
+  async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
     const toolsResult = await this.fetchFromJenkins(jenkins, `${statusLink}warnings-ng/api/json`);
     if (!toolsResult.ok) {
       return [];
@@ -239,6 +239,7 @@ export class ChecksFetcher implements ChecksProvider {
         checkName: `${tool.name}`,
         status: RunStatus.COMPLETED,
         statusLink: `${tool.latestUrl}`,
+        attempt: attempt,
         actions: [],
         results: results.slice(),
       })
@@ -249,7 +250,7 @@ export class ChecksFetcher implements ChecksProvider {
     return checkRuns;
   }
 
-  async buildTestResults(jenkins: Config, changeData: ChangeData, statusLink: string) {
+  async buildTestResults(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
     interface TestCase {
       className: string;
       errorDetails: string | null;
@@ -292,6 +293,7 @@ export class ChecksFetcher implements ChecksProvider {
       checkName: "JUnit",
       status: RunStatus.COMPLETED,
       statusLink: `${statusLink}testReport`,
+      attempt: attempt,
       actions: [],
       results: results,
     })
