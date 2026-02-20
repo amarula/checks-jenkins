@@ -12,6 +12,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Base64;
+import java.time.Duration;
 import java.util.stream.Collectors;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -20,7 +21,10 @@ import javax.servlet.http.HttpServletResponse;
 @Singleton
 public class JenkinsProxyServlet extends HttpServlet {
   private static final FluentLogger log = FluentLogger.forEnclosingClass();
-  private final HttpClient httpClient = HttpClient.newBuilder().build();
+  final int CONNECTION_TIMEOUT = 30;
+  private final HttpClient httpClient = HttpClient.newBuilder()
+    .connectTimeout(Duration.ofSeconds(CONNECTION_TIMEOUT)).build();
+  final int REQUEST_TIMEOUT = 60;
 
   @Override
   protected void doPost(HttpServletRequest req, HttpServletResponse res) throws IOException {
@@ -41,6 +45,7 @@ public class JenkinsProxyServlet extends HttpServlet {
 
     HttpRequest jenkinsRequest = HttpRequest.newBuilder()
         .uri(URI.create(finalUrl))
+        .timeout(Duration.ofSeconds(REQUEST_TIMEOUT))
         .header("Authorization", "Basic " + auth)
         .GET()
         .build();
