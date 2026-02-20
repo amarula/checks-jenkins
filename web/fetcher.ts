@@ -126,7 +126,6 @@ export class ChecksFetcher implements ChecksProvider {
       };
     }
     const checkRuns: CheckRun[] = [];
-    const warningsData: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
       const response = await this.fetchFromJenkins(jenkins, checks_url);
@@ -147,19 +146,27 @@ export class ChecksFetcher implements ChecksProvider {
       const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
       const cachedData: CheckRun[] = await cacheService.get(key);
       if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
+        let warningsData: CheckRun[] = [];
+        let hasData: Boolean = false;
         for (const run of data.runs) {
           if (run.status === RunStatus.COMPLETED) {
             const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt);
             if (runWarningResults.length) {
               warningsData.push(...runWarningResults);
+              hasData = true;
             }
             const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt);
             if (runTestResults.length) {
               warningsData.push(...runTestResults);
+              hasData = true;
             }
           }
         }
-        cacheService.put(key, warningsData);
+        if (hasData === true) {
+          cacheService.put(key, warningsData.slice());
+          checkRuns.push(...warningsData.slice());
+        }
+        warningsData = [];
       } else {
         checkRuns.push(...cachedData);
       }
