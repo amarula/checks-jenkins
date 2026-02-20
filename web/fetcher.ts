@@ -28,6 +28,8 @@ import {
   TagColor,
 } from '@gerritcodereview/typescript-api/checks';
 import { PluginApi } from '@gerritcodereview/typescript-api/plugin';
+import { cacheService } from './request-cache-service';
+import { RequestKey } from './index-db';
 
 export declare interface Config {
   name: string;
@@ -124,6 +126,7 @@ export class ChecksFetcher implements ChecksProvider {
       };
     }
     const checkRuns: CheckRun[] = [];
+    const warningsData: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
       const response = await this.fetchFromJenkins(jenkins, checks_url);
@@ -135,17 +138,30 @@ export class ChecksFetcher implements ChecksProvider {
         };
       }
       const data = await response.json();
-      for (const run of data.runs) {
-        if (run.status === RunStatus.COMPLETED) {
-          const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt);
-          if (runWarningResults.length) {
-            checkRuns.push(...runWarningResults);
-          }
-          const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt);
-          if (runTestResults.length) {
-            checkRuns.push(...runTestResults);
+
+      const runEntries = Object.entries(data.runs);
+      const totalRuns: number = runEntries.length;
+      const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
+      const cachedData: CheckRun[] = await cacheService.get(key);
+      if (cachedData === null || cachedData === undefined) {
+        for (const run of data.runs) {
+          if (run.status === RunStatus.COMPLETED) {
+            const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt);
+            if (runWarningResults.length) {
+              warningsData.push(...runWarningResults);
+            }
+            const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt);
+            if (runTestResults.length) {
+              warningsData.push(...runTestResults);
+            }
           }
         }
+        cacheService.put(key, warningsData);
+      } else {
+        checkRuns.push(...cachedData);
+      }
+
+      for (const run of data.runs) {
         checkRuns.push(this.convert(jenkins, run));
       };
     }
