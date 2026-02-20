@@ -141,6 +141,9 @@ export class ChecksFetcher implements ChecksProvider {
 
       const runEntries = Object.entries(data.runs);
       const totalRuns: number = runEntries.length;
+      if (totalRuns == 0) {
+        continue;
+      }
       const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
       const cachedData: CheckRun[] = await cacheService.get(key);
       if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
