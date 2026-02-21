@@ -35,7 +35,12 @@ export declare interface Config {
   name: string;
   url: string;
   user: string;
-  token: string;
+}
+
+export interface ProxyInput {
+  jenkinsname: string;
+  urlpath: string;
+  method: string;
 }
 
 export declare interface JenkinsCheckRun {
@@ -128,16 +133,21 @@ export class ChecksFetcher implements ChecksProvider {
     const checkRuns: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
-      const response = await this.fetchFromJenkins(jenkins, checks_url);
-      if (response.status === 403) {
+      const response = await this.fetchFromJenkins(jenkins, changeData.repo, checks_url, "GET");
+      if (response.status != undefined && response.status === 403) {
         // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
         return {
           responseCode: ResponseCode.NOT_LOGGED_IN,
           loginCallback: () => window.open(jenkins.url),
         };
       }
-      const data = await response.json();
-
+      let data = [];
+      if (response.status != undefined) {
+        data = await response.json();
+      } else {
+        const val: string = response.toString();
+        data = JSON.parse(val);
+      }
       const runEntries = Object.entries(data.runs);
       const totalRuns: number = runEntries.length;
       if (totalRuns == 0) {
@@ -172,7 +182,7 @@ export class ChecksFetcher implements ChecksProvider {
       }
 
       for (const run of data.runs) {
-        checkRuns.push(this.convert(jenkins, run));
+        checkRuns.push(this.convert(jenkins, changeData.repo, run));
       };
     }
 
@@ -215,7 +225,7 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
-    const toolsResult = await this.fetchFromJenkins(jenkins, `${statusLink}warnings-ng/api/json`);
+    const toolsResult = await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}warnings-ng/api/json`, "GET");
     if (!toolsResult.ok) {
       return [];
     }
@@ -224,7 +234,8 @@ export class ChecksFetcher implements ChecksProvider {
     const checkRuns: CheckRun[] = [];
 
     for (const tool of toolsInfo.tools) {
-      const toolResult = await this.fetchFromJenkins(jenkins, `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`);
+      const toolResult = await this.fetchFromJenkins(jenkins, changeData.repo,
+        `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
       if (!toolResult.ok) {
         continue;
       }
@@ -293,7 +304,8 @@ export class ChecksFetcher implements ChecksProvider {
       suites: TestSuite[];
     }
 
-    const testResult = await this.fetchFromJenkins(jenkins, `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`);
+    const testResult = await this.fetchFromJenkins(jenkins, changeData.repo,
+      `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`, "GET");
     if (!testResult.ok) {
       return [];
     }
@@ -336,7 +348,7 @@ export class ChecksFetcher implements ChecksProvider {
       );
   }
 
-  convert(jenkins: Config, run: JenkinsCheckRun): CheckRun {
+  convert(jenkins: Config, repo: string, run: JenkinsCheckRun): CheckRun {
     const convertedRun: CheckRun = {
       attempt: run.attempt,
       change: run.change,
@@ -362,41 +374,35 @@ export class ChecksFetcher implements ChecksProvider {
         primary: action.primary,
         summary: action.summary,
         disabled: action.disabled,
-        callback: () => this.rerun(jenkins, action.url),
+        callback: () => this.rerun(jenkins, repo, action.url + "/index"),
       });
     }
     convertedRun.actions = actions;
     return convertedRun;
   }
 
-  private fetchFromJenkins(jenkins: Config, url: string): Promise<Response> {
-    const PROXY_URL = '/a/plugins/checks-jenkins/proxy-trigger';
-    const jenkinsUrl = jenkins.url
-    const jenkinsAuth = `${jenkins.user}:${jenkins.token}`
-
-    if (!jenkins.user || !jenkins.token) {
+  private fetchFromJenkins(jenkins: Config, repo: string, url: string, method: string): Promise<Response> {
+    if (!jenkins.user) {
       const options: RequestInit = { credentials: 'include' };
       return fetch(url, options);
     }
 
     const dst = new URL(url);
     const extractPath = `${dst.pathname.substring(1)}${dst.search}`;
-
-    const options: RequestInit = {
-      method: 'POST',
-      headers: {
-        'X-Jenkins-Server': jenkinsUrl,
-        'X-Jenkins-Auth': jenkinsAuth,
-        'X-Jenkins-UrlPath': extractPath,
-      },
-      body: url
+    const pluginName = encodeURIComponent(this.plugin.getPluginName());
+    const payload: ProxyInput = {
+      jenkinsname: jenkins.name,
+      urlpath: encodeURI(extractPath),
+      method: method,
     };
-
-    return fetch(PROXY_URL, options);
+    return this.plugin.restApi().post(
+        `/projects/${encodeURIComponent(repo)}/${pluginName}~proxy-trigger`,
+        payload
+    );
   }
 
-  private rerun(jenkins: Config, url: string): Promise<ActionResult> {
-    return this.fetchFromJenkins(jenkins, url)
+  private rerun(jenkins: Config, repo: string, url: string): Promise<ActionResult> {
+    return this.fetchFromJenkins(jenkins, repo, url, "POST")
       .then(_ => {
         return {
           message: 'Run triggered.',
@@ -404,6 +410,14 @@ export class ChecksFetcher implements ChecksProvider {
         };
       })
       .catch(e => {
+        const msg: string = e.message;
+        /* Redirect that is not be considered as error */
+        if (msg.includes('302')) {
+          return {
+            message: 'Run triggered.',
+            shouldReload: true,
+          }
+        }
         return { message: `Triggering the run failed: ${e.message}` };
       });
   }

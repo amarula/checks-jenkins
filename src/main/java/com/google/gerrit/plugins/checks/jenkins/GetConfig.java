@@ -15,6 +15,7 @@
 package com.google.gerrit.plugins.checks.jenkins;
 
 import com.google.gerrit.extensions.annotations.PluginName;
+import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
 import com.google.gerrit.server.config.PluginConfigFactory;
@@ -28,9 +29,9 @@ import org.eclipse.jgit.lib.Config;
 
 @Singleton
 class GetConfig implements RestReadView<ProjectResource> {
+  private static final FluentLogger log = FluentLogger.forEnclosingClass();
   private static final String JENKINS_SECTION = "jenkins";
   private static final String JENKINS_URL_KEY = "url";
-  private static final String JENKINS_TOKEN_KEY = "token";
   private static final String JENKINS_USER_KEY = "user";
 
   private final PluginConfigFactory config;
@@ -47,12 +48,13 @@ class GetConfig implements RestReadView<ProjectResource> {
       throws NoSuchProjectException {
     Set<JenkinsChecksConfig> result = new HashSet<>();
     Config cfg = config.getProjectPluginConfig(project.getNameKey(), pluginName);
+
     for (String instance : cfg.getSubsections(JENKINS_SECTION)) {
       JenkinsChecksConfig jenkinsCfg = new JenkinsChecksConfig();
       jenkinsCfg.name = instance;
       jenkinsCfg.url = cfg.getString(JENKINS_SECTION, instance, JENKINS_URL_KEY);
       jenkinsCfg.user = cfg.getString(JENKINS_SECTION, instance, JENKINS_USER_KEY);
-      jenkinsCfg.token = cfg.getString(JENKINS_SECTION, instance, JENKINS_TOKEN_KEY);
+
       result.add(jenkinsCfg);
     }
     return Response.ok(result);
@@ -62,7 +64,6 @@ class GetConfig implements RestReadView<ProjectResource> {
     String name;
     String url;
     String user;
-    String token;
   }
 
 }

@@ -22,5 +22,6 @@ public class ApiModule extends RestApiModule {
   @Override
   protected void configure() {
     get(PROJECT_KIND, "config").to(GetConfig.class);
+    post(PROJECT_KIND, "proxy-trigger").to(ProxyTriggerAction.class);
   }
 }
