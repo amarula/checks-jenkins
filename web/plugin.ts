@@ -16,11 +16,12 @@
  */
 import '@gerritcodereview/typescript-api/gerrit';
 import {ChecksFetcher} from './fetcher';
+import {PluginApi} from '@gerritcodereview/typescript-api/plugin';
 
-window.Gerrit.install(plugin => {
-  const checksApi = plugin.checks();
+window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
   const fetcher = new ChecksFetcher(plugin);
-  checksApi.register({
-    fetch: data => fetcher.fetch(data),
-  });
+  plugin.checks().register(
+    {fetch: changeData => fetcher.fetch(changeData) as any},
+    {fetchPollingIntervalSeconds: 60}
+  );
 });

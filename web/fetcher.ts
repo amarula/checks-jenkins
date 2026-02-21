@@ -114,17 +114,28 @@ export class ChecksFetcher implements ChecksProvider {
     this.configs = null;
   }
 
-  async fetch(changeData: ChangeData) {
-    if (this.configs === null) {
-      await this.fetchConfig(changeData)
-        .then(result => {
-          this.configs = result;
-        })
-        .catch(reason => {
-          throw reason;
-        });
+  private async toJson(response: Response) {
+    let data;
+    if (response.status != undefined) {
+      data = await response.json();
+    } else {
+      const val: string = response.toString();
+      data = JSON.parse(val);
     }
-    if (this.configs === null) {
+
+    return data;
+  }
+
+  async fetch(changeData: ChangeData) {
+    await this.fetchConfig(changeData)
+      .then(result => {
+        this.configs = result;
+      })
+      .catch(reason => {
+        throw reason;
+      });
+
+    if (this.configs === null || this.configs.length === 0) {
       return {
         responseCode: ResponseCode.OK,
         runs: [],
@@ -134,20 +145,14 @@ export class ChecksFetcher implements ChecksProvider {
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
       const response = await this.fetchFromJenkins(jenkins, changeData.repo, checks_url, "GET");
-      if (response.status != undefined && response.status === 403) {
+      if (response == null || (response.status != undefined && response.status === 403)) {
         // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
         return {
           responseCode: ResponseCode.NOT_LOGGED_IN,
           loginCallback: () => window.open(jenkins.url),
         };
       }
-      let data = [];
-      if (response.status != undefined) {
-        data = await response.json();
-      } else {
-        const val: string = response.toString();
-        data = JSON.parse(val);
-      }
+      const data = await this.toJson(response);
       const runEntries = Object.entries(data.runs);
       const totalRuns: number = runEntries.length;
       if (totalRuns == 0) {
@@ -226,20 +231,22 @@ export class ChecksFetcher implements ChecksProvider {
 
   async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
     const toolsResult = await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}warnings-ng/api/json`, "GET");
-    if (!toolsResult.ok) {
+    if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
       return [];
     }
 
-    const toolsInfo: AnalysisResponse = await toolsResult.json();
+    const toolsInfo: AnalysisResponse = await this.toJson(toolsResult);
     const checkRuns: CheckRun[] = [];
 
     for (const tool of toolsInfo.tools) {
       const toolResult = await this.fetchFromJenkins(jenkins, changeData.repo,
         `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
-      if (!toolResult.ok) {
+
+      if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
         continue;
       }
-      const warnings: AnalysisReport = await toolResult.json();
+
+      const warnings: AnalysisReport = await this.toJson(toolResult);
       let results: CheckResult[] = [];
 
       for (const issue of warnings.issues) {
@@ -306,10 +313,12 @@ export class ChecksFetcher implements ChecksProvider {
 
     const testResult = await this.fetchFromJenkins(jenkins, changeData.repo,
       `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`, "GET");
-    if (!testResult.ok) {
+
+    if (testResult === null || (testResult.ok != undefined && !testResult.ok)) {
       return [];
     }
-    const testReport: JunitResult = await testResult.json();
+
+    const testReport: JunitResult = await this.toJson(testResult);
     const results: CheckResult[] = [];
 
     const failedTests: CheckResult[] = testReport.suites.flatMap(suite =>
@@ -396,8 +405,8 @@ export class ChecksFetcher implements ChecksProvider {
       method: method,
     };
     return this.plugin.restApi().post(
-        `/projects/${encodeURIComponent(repo)}/${pluginName}~proxy-trigger`,
-        payload
+      `/projects/${encodeURIComponent(repo)}/${pluginName}~proxy-trigger`,
+      payload
     );
   }
 
