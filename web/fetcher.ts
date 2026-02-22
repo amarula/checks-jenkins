@@ -144,7 +144,13 @@ export class ChecksFetcher implements ChecksProvider {
     const checkRuns: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
-      const response = await this.fetchFromJenkins(jenkins, changeData.repo, checks_url, "GET");
+      const response = await (async () => {
+        try {
+          return await this.fetchFromJenkins(jenkins, changeData.repo, checks_url, "GET");
+        } catch (e) {
+          return null;
+        }
+      })();
       if (response == null || (response.status != undefined && response.status === 403)) {
         // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
         return {
@@ -230,7 +236,15 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
-    const toolsResult = await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}warnings-ng/api/json`, "GET");
+
+    const toolsResult = await (async () => {
+      try {
+        return await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}warnings-ng/api/json`, "GET");
+      } catch (e) {
+        return null;
+      }
+    })();
+
     if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
       return [];
     }
@@ -239,14 +253,20 @@ export class ChecksFetcher implements ChecksProvider {
     const checkRuns: CheckRun[] = [];
 
     for (const tool of toolsInfo.tools) {
-      const toolResult = await this.fetchFromJenkins(jenkins, changeData.repo,
-        `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
+      const toolsResult = await (async() => {
+        try {
+          return await this.fetchFromJenkins(jenkins, changeData.repo,
+            `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
+        } catch(e) {
+          return null;
+        }
+      })();
 
       if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
         continue;
       }
 
-      const warnings: AnalysisReport = await this.toJson(toolResult);
+      const warnings: AnalysisReport = await this.toJson(toolsResult);
       let results: CheckResult[] = [];
 
       for (const issue of warnings.issues) {
@@ -311,8 +331,14 @@ export class ChecksFetcher implements ChecksProvider {
       suites: TestSuite[];
     }
 
-    const testResult = await this.fetchFromJenkins(jenkins, changeData.repo,
-      `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`, "GET");
+    const testResult = await (async () => {
+      try {
+        return await this.fetchFromJenkins(jenkins, changeData.repo,
+          `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`, "GET");
+      } catch (e) {
+        return null;
+      }
+    })();
 
     if (testResult === null || (testResult.ok != undefined && !testResult.ok)) {
       return [];
