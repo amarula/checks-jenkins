@@ -18,6 +18,7 @@ import com.google.gerrit.extensions.annotations.PluginName;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestReadView;
+import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.PluginConfigFactory;
 import com.google.gerrit.server.project.NoSuchProjectException;
 import com.google.gerrit.server.project.ProjectResource;
@@ -37,6 +38,14 @@ class GetConfig implements RestReadView<ProjectResource> {
   private final PluginConfigFactory config;
   private final String pluginName;
 
+  private void addJenkinsIstance(Set<JenkinsChecksConfig> serversList, String instance, Config cfg) {
+    JenkinsChecksConfig jenkinsCfg = new JenkinsChecksConfig();
+    jenkinsCfg.name = instance;
+    jenkinsCfg.url = cfg.getString(JENKINS_SECTION, instance, JENKINS_URL_KEY);
+    jenkinsCfg.user = cfg.getString(JENKINS_SECTION, instance, JENKINS_USER_KEY);
+    serversList.add(jenkinsCfg);
+  }
+
   @Inject
   GetConfig(PluginConfigFactory config, @PluginName String pluginName) {
     this.config = config;
@@ -46,16 +55,22 @@ class GetConfig implements RestReadView<ProjectResource> {
   @Override
   public Response<Set<JenkinsChecksConfig>> apply(ProjectResource project)
       throws NoSuchProjectException {
+    PluginConfig globalConfig = config.getFromGerritConfig(pluginName);
     Set<JenkinsChecksConfig> result = new HashSet<>();
     Config cfg = config.getProjectPluginConfig(project.getNameKey(), pluginName);
 
     for (String instance : cfg.getSubsections(JENKINS_SECTION)) {
+        addJenkinsIstance(result, instance, cfg);
+    }
+    if (result.isEmpty() && globalConfig != null) {
       JenkinsChecksConfig jenkinsCfg = new JenkinsChecksConfig();
-      jenkinsCfg.name = instance;
-      jenkinsCfg.url = cfg.getString(JENKINS_SECTION, instance, JENKINS_URL_KEY);
-      jenkinsCfg.user = cfg.getString(JENKINS_SECTION, instance, JENKINS_USER_KEY);
 
-      result.add(jenkinsCfg);
+      jenkinsCfg.url = globalConfig.getString(JENKINS_URL_KEY);
+      jenkinsCfg.user = globalConfig.getString(JENKINS_USER_KEY);
+      if (jenkinsCfg.url != null && jenkinsCfg.user != null) {
+        jenkinsCfg.name = "globalConfig";
+        result.add(jenkinsCfg);
+      }
     }
     return Response.ok(result);
   }

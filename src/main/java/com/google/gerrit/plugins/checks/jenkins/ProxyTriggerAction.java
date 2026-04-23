@@ -19,6 +19,7 @@ import com.google.gerrit.plugins.checks.jenkins.GetConfig.JenkinsChecksConfig;
 import com.google.gerrit.plugins.checks.jenkins.ProxyTriggerAction.ProxyInput;
 import com.google.gerrit.extensions.annotations.PluginName;
 import com.google.gerrit.server.config.GerritServerConfig;
+import com.google.gerrit.server.config.PluginConfig;
 import com.google.gerrit.server.config.PluginConfigFactory;
 import com.google.gerrit.server.project.ProjectResource;
 import com.google.gerrit.extensions.restapi.Response;
@@ -64,6 +65,7 @@ public class ProxyTriggerAction implements RestModifyView<ProjectResource, Proxy
   @Override
   public Response<?> apply(ProjectResource resource, ProxyInput input)
       throws IOException, RestApiException, NoSuchProjectException, InterruptedException {
+    PluginConfig globalConfig = config.getFromGerritConfig(pluginName);
     String jenkinsName = input.jenkinsname;
     String urlPath = URLDecoder.decode(input.urlpath, StandardCharsets.UTF_8.toString());
     String method = input.method;
@@ -75,13 +77,19 @@ public class ProxyTriggerAction implements RestModifyView<ProjectResource, Proxy
       throw new BadRequestException("jenkinsName is required");
     }
 
-   Config cfg = config.getProjectPluginConfig(resource.getNameKey(), pluginName);
+    Config cfg = config.getProjectPluginConfig(resource.getNameKey(), pluginName);
     for (String instance : cfg.getSubsections(JENKINS_SECTION)) {
       if (instance.equals(jenkinsName)) {
         jenkinsAuth = cfg.getString(JENKINS_SECTION, instance, JENKINS_USER_KEY) + ":" +
           cfg.getString(JENKINS_SECTION, instance, JENKINS_TOKEN_KEY);
         targetUrl = cfg.getString(JENKINS_SECTION, instance, JENKINS_URL_KEY);
       }
+    }
+
+    if ((jenkinsAuth == null || targetUrl == null) && globalConfig != null) {
+        jenkinsAuth = globalConfig.getString(JENKINS_USER_KEY) + ":" +
+          globalConfig.getString(JENKINS_TOKEN_KEY);
+        targetUrl = globalConfig.getString(JENKINS_URL_KEY);
     }
 
     if (jenkinsAuth == null || targetUrl == null) {
