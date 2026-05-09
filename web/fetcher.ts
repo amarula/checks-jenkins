@@ -211,7 +211,7 @@ export class ChecksFetcher implements ChecksProvider {
       const cachedData: CheckRun[] = await cacheService.get(key);
       if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
         let warningsData: CheckRun[] = [];
-        let hasData: Boolean = false;
+        let hasData: boolean = false;
         for (const run of data.runs) {
           if (run.status === RunStatus.COMPLETED) {
             const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt);
