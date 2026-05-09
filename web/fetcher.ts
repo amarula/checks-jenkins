@@ -183,7 +183,7 @@ export class ChecksFetcher implements ChecksProvider {
           if (!run.results) {
             run.results = [];
           }
-          const errorResult: boolean = run.results.find((result: CheckResult) => result.category === Category.ERROR);
+          const errorResult = run.results.find((result: CheckResult) => result.category === Category.ERROR);
           if (errorResult) {
             const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
             if (errorMessage) {
@@ -198,11 +198,8 @@ export class ChecksFetcher implements ChecksProvider {
                 run.results = [];
               }
 
-              run.results.push({
-                category: Category.ERROR,
-                summary: parsedSummary,
-                message: markdownMessage
-              });
+              errorResult.summary = parsedSummary;
+              errorResult.message = markdownMessage;
             }
           }
         }
