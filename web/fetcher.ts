@@ -104,6 +104,11 @@ interface AnalysisReport {
   issues: AnalysisIssue[];
 }
 
+interface ErrorResponse {
+  _class: string;
+  explanation?: string;
+}
+
 export class ChecksFetcher implements ChecksProvider {
   private plugin: PluginApi;
 
@@ -166,6 +171,37 @@ export class ChecksFetcher implements ChecksProvider {
         continue;
       }
       const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
+
+      for (const run of data.runs) {
+        if (run.status === RunStatus.COMPLETED) {
+          if (!run.results) {
+            run.results = [];
+          }
+          const errorResult: boolean = run.results.find((result: CheckResult) => result.category === Category.ERROR);
+          if (errorResult) {
+            const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
+            if (errorMessage) {
+              const lines = errorMessage.split('\n');
+              const parsedSummary = lines[0].trim();
+              const detailedMessage = lines.slice(1).join('\n').trim();
+              const markdownMessage = detailedMessage
+                ? `\`\`\`text\n${detailedMessage}\n\`\`\``
+                : 'No additional details provided.';
+
+              if (!run.results) {
+                run.results = [];
+              }
+
+              run.results.push({
+                category: Category.ERROR,
+                summary: parsedSummary,
+                message: markdownMessage
+              });
+            }
+          }
+        }
+      }
+
       const cachedData: CheckRun[] = await cacheService.get(key);
       if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
         let warningsData: CheckRun[] = [];
@@ -386,6 +422,26 @@ export class ChecksFetcher implements ChecksProvider {
     })
 
     return checkRuns;
+  }
+
+  async explainBuildFailure(jenkins: Config, changeData: ChangeData, statusLink: string) {
+    const errorResult = await (async () => {
+      try {
+        return await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}error-explanation/api/json`, "GET");
+      } catch (e) {
+        return null;
+      }
+    })();
+
+    if (errorResult === null || (errorResult.ok != undefined && !errorResult.ok)) {
+      return null;
+    }
+
+    const errorInfo: ErrorResponse = await this.toJson(errorResult);
+    if (errorInfo === null) {
+      return null;
+    }
+    return errorInfo.explanation;
   }
 
   fetchConfig(changeData: ChangeData): Promise<Config[]> {
