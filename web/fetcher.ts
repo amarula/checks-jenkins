@@ -165,6 +165,12 @@ export class ChecksFetcher implements ChecksProvider {
         };
       }
       const data = await this.toJson(response);
+      if (data == null) {
+        continue;
+      }
+      if (!data?.runs || !Array.isArray(data.runs)) {
+        continue;
+      }
       const runEntries = Object.entries(data.runs);
       const totalRuns: number = runEntries.length;
       if (totalRuns == 0) {
