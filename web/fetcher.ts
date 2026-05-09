@@ -115,15 +115,16 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   private async toJson(response: Response) {
-    let data: any;
-    if (response.status != undefined) {
-      data = await response.json();
-    } else {
-      const val: string = response.toString();
-      data = JSON.parse(val);
+    try {
+      if (response.status != undefined) {
+        return await response.json();
+      } else {
+        const val: string = response.toString();
+        return JSON.parse(val);
+      }
+    } catch {
+        return null;
     }
-
-    return data;
   }
 
   async fetch(changeData: ChangeData) {
@@ -250,6 +251,9 @@ export class ChecksFetcher implements ChecksProvider {
     }
 
     const toolsInfo: AnalysisResponse = await this.toJson(toolsResult);
+    if (toolsInfo === null) {
+      return [];
+    }
     const checkRuns: CheckRun[] = [];
 
     for (const tool of toolsInfo.tools) {
@@ -267,6 +271,9 @@ export class ChecksFetcher implements ChecksProvider {
       }
 
       const warnings: AnalysisReport = await this.toJson(toolsResult);
+      if (warnings === null) {
+        continue;
+      }
       let results: CheckResult[] = [];
 
       for (const issue of warnings.issues) {
@@ -345,6 +352,9 @@ export class ChecksFetcher implements ChecksProvider {
     }
 
     const testReport: JunitResult = await this.toJson(testResult);
+    if (testReport === null) {
+      return [];
+    }
     const results: CheckResult[] = [];
 
     const failedTests: CheckResult[] = testReport.suites.flatMap(suite =>
@@ -357,6 +367,10 @@ export class ChecksFetcher implements ChecksProvider {
           summary: `${test.className}.${test.name}`
         }))
     );
+
+    if (!failedTests.length) {
+      return [];
+    }
 
     results.push(...failedTests);
     const checkRuns: CheckRun[] = [];
