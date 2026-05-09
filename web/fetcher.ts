@@ -184,7 +184,7 @@ export class ChecksFetcher implements ChecksProvider {
           }
         }
         if (hasData === true) {
-          cacheService.put(key, warningsData.slice());
+          await cacheService.put(key, warningsData.slice());
           checkRuns.push(...warningsData.slice());
         }
         warningsData = [];
