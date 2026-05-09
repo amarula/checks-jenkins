@@ -446,7 +446,7 @@ export class ChecksFetcher implements ChecksProvider {
       })
       .catch(e => {
         const msg: string = e.message;
-        /* Redirect that is not be considered as error */
+        /* Redirect that is not to be considered as error */
         if (msg.includes('302')) {
           return {
             message: 'Run triggered.',
