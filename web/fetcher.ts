@@ -194,7 +194,7 @@ export class ChecksFetcher implements ChecksProvider {
 
       for (const run of data.runs) {
         checkRuns.push(this.convert(jenkins, changeData.repo, run));
-      };
+      }
     }
 
     return {
