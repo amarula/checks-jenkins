@@ -115,7 +115,7 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   private async toJson(response: Response) {
-    let data;
+    let data: any;
     if (response.status != undefined) {
       data = await response.json();
     } else {
