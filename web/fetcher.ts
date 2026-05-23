@@ -58,7 +58,7 @@ export declare interface JenkinsCheckRun {
   scheduledTimestamp: string;
   startedTimestamp: string;
   status: RunStatus;
-  statusDesciption: string;
+  statusDescription: string;
   statusLink: string;
 }
 
@@ -480,7 +480,7 @@ export class ChecksFetcher implements ChecksProvider {
       scheduledTimestamp: new Date(run.scheduledTimestamp),
       startedTimestamp: new Date(run.startedTimestamp),
       status: run.status,
-      statusDescription: run.statusDesciption,
+      statusDescription: run.statusDescription,
       statusLink: run.statusLink,
     };
     const actions: Action[] = [];
