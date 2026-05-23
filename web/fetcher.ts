@@ -80,6 +80,7 @@ interface AnalysisTool {
   latestUrl: string;
   errorSize: number;
   highSize: number;
+  lowSize: number;
   normalSize: number;
 }
 
@@ -251,27 +252,34 @@ export class ChecksFetcher implements ChecksProvider {
       return Category.WARNING;
     } else if (tool.normalSize && tool.size >= tool.normalSize) {
       return Category.INFO;
+    } else if (tool.lowSize && tool.size >= tool.lowSize) {
+      return Category.INFO;
     }
     return Category.SUCCESS;
   }
 
   private warningNgGetTagColor(issue: AnalysisIssue): TagColor {
-    if (issue.severity == "TOTAL_ERROR" ||
-      issue.severity == "NEW_ERROR" ||
-      issue.severity == "DELTA_ERROR") {
-      return TagColor.PURPLE;
-    } else if (issue.severity == "TOTAL_HIGH" ||
-      issue.severity == "NEW_HIGH" ||
-      issue.severity == "DELTA_HIGH") {
-      return TagColor.BROWN;
-    } else if (issue.severity == "TOTAL_NORMAL" ||
-      issue.severity == "NEW_NORMAL" ||
-      issue.severity == "DELTA_NORMAL") {
-      return TagColor.YELLOW;
-    } else if (issue.severity == "TOTAL_LOW" ||
-      issue.severity == "NEW_LOW" ||
-      issue.severity == "DELTA_LOW") {
-      return TagColor.PINK;
+    switch (issue.severity) {
+      case "TOTAL_ERROR":
+      case "NEW_ERROR":
+      case "DELTA_ERROR":
+      case "ERROR":
+        return TagColor.PURPLE;
+      case "TOTAL_HIGH":
+      case "NEW_HIGH":
+      case "DELTA_HIGH":
+      case "HIGH":
+        return TagColor.BROWN;
+      case "TOTAL_NORMAL":
+      case "NEW_NORMAL":
+      case "DELTA_NORMAL":
+      case "NORMAL":
+        return TagColor.YELLOW;
+      case "TOTAL_LOW":
+      case "NEW_LOW":
+      case "DELTA_LOW":
+      case "LOW":
+        return TagColor.PINK;
     }
     return TagColor.GRAY;
   }
