@@ -201,7 +201,7 @@ export class ChecksFetcher implements ChecksProvider {
 
               errorResult.summary = parsedSummary;
               errorResult.message = markdownMessage;
-              run.statusDesciption = parsedSummary;
+              run.statusDescription = parsedSummary;
             }
           }
         }
