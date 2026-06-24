@@ -35,6 +35,7 @@ export declare interface Config {
   name: string;
   url: string;
   user: string;
+  coverage_enabled?: boolean;
 }
 
 export interface ProxyInput {

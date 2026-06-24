@@ -34,6 +34,7 @@ class GetConfig implements RestReadView<ProjectResource> {
   private static final String JENKINS_SECTION = "jenkins";
   private static final String JENKINS_URL_KEY = "url";
   private static final String JENKINS_USER_KEY = "user";
+  private static final String JENKINS_COVERAGE_KEY = "coverage";
 
   private final PluginConfigFactory config;
   private final String pluginName;
@@ -43,6 +44,7 @@ class GetConfig implements RestReadView<ProjectResource> {
     jenkinsCfg.name = instance;
     jenkinsCfg.url = cfg.getString(JENKINS_SECTION, instance, JENKINS_URL_KEY);
     jenkinsCfg.user = cfg.getString(JENKINS_SECTION, instance, JENKINS_USER_KEY);
+    jenkinsCfg.coverage_enabled = "true".equals(cfg.getString(JENKINS_SECTION, instance, JENKINS_COVERAGE_KEY));
     serversList.add(jenkinsCfg);
   }
 
@@ -67,6 +69,7 @@ class GetConfig implements RestReadView<ProjectResource> {
 
       jenkinsCfg.url = globalConfig.getString(JENKINS_URL_KEY);
       jenkinsCfg.user = globalConfig.getString(JENKINS_USER_KEY);
+      jenkinsCfg.coverage_enabled = "true".equals(globalConfig.getString(JENKINS_COVERAGE_KEY));
       if (jenkinsCfg.url != null && jenkinsCfg.user != null) {
         jenkinsCfg.name = "globalConfig";
         result.add(jenkinsCfg);
@@ -79,6 +82,7 @@ class GetConfig implements RestReadView<ProjectResource> {
     String name;
     String url;
     String user;
+    Boolean coverage_enabled;
   }
 
 }
