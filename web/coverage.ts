@@ -158,6 +158,7 @@ export class CoverageClient {
 
   /** Cached coverage data. */
   private cached: CoverageCacheEntry | null = null;
+  private cachedLinkStatus: string | null = null;
   /** In-flight cache update key and promise to dedupe concurrent calls. */
   private cachedPromiseKey: string | null = null;
   private cachedPromise: Promise<void> | null = null;
@@ -354,8 +355,10 @@ export class CoverageClient {
       const statusLink = await this.findCompletedRun(jenkins, repo, changeNum, patchNum);
       if (!statusLink) {
         this.cached = {changeInfo, projectResponse: null, ranges: null, percentages: null};
+        this.cachedLinkStatus = null;
         return;
       }
+      this.cachedLinkStatus = statusLink;
 
       const {projectResponse, modifiedLines} = await this.fetchAllCoverage(jenkins, repo, statusLink)
         .catch(e => { console.warn('checks-jenkins: coverage fetch failed', e); return {projectResponse: null, modifiedLines: null}; });
@@ -468,7 +471,7 @@ export class CoverageClient {
           checkName: 'Code Coverage',
           status: RunStatus.COMPLETED,
           results: coverageResults,
-          statusLink: jenkins.url,
+          statusLink: `${this.cachedLinkStatus}coverage`,
         });
       }
 
