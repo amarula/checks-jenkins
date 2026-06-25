@@ -143,6 +143,8 @@ interface CoverageCacheEntry {
   changeInfo: CoverageChangeInfo;
   /** Current statusLink from the completed run.  null when no run found. */
   statusLink: string | null;
+  /** Attempt number of the completed run. */
+  attempt: number | null;
   /** Raw project-level response (for checks). */
   projectResponse: ProjectCoverageResponse | null;
   /** Parsed per-file ranges (for diff annotations). */
@@ -229,11 +231,11 @@ export class CoverageClient {
   // ---- Data fetching ----
 
   /**
-   * Fetches a completed Jenkins run's statusLink for the given change.
+   * Fetches a completed Jenkins run's statusLink and attempt for the given change.
    */
   private async findCompletedRun(
     jenkins: Config, repo: string, changeNum: number, patchNum: number
-  ): Promise<string | null> {
+  ): Promise<{statusLink: string; attempt: number} | null> {
     const runsUrl = `${jenkins.url}/gerrit-checks/runs?change=${changeNum}&patchset=${patchNum}`;
     const response = await (async () => {
       try { return await this.fetchFromJenkins(jenkins, repo, runsUrl); } catch { return null; }
@@ -244,7 +246,8 @@ export class CoverageClient {
     if (!data?.runs || !Array.isArray(data.runs) || data.runs.length === 0) return null;
 
     const completedRun = (data.runs as JenkinsRunEntry[]).find(r => r.status === 'COMPLETED');
-    return completedRun?.statusLink || null;
+    if (!completedRun?.statusLink) return null;
+    return {statusLink: completedRun.statusLink, attempt: completedRun.attempt};
   }
 
   /**
@@ -406,9 +409,9 @@ export class CoverageClient {
       const dbEntry = await coverageCacheService.get(cacheKey);
 
       // 4. Check whether the cached statusLink is still current (cheap call)
-      let statusLink: string | null = null;
+      let runInfo: {statusLink: string; attempt: number} | null = null;
       try {
-        statusLink = await this.findCompletedRun(jenkins, repo, changeNum, patchNum);
+        runInfo = await this.findCompletedRun(jenkins, repo, changeNum, patchNum);
       } catch {
         // If the runs endpoint fails but we have cached data, serve it stale
         if (dbEntry) {
@@ -417,17 +420,19 @@ export class CoverageClient {
         }
       }
 
-      // 5. IndexedDB hit with matching statusLink — promote to memory
-      if (dbEntry && statusLink && dbEntry.statusLink === statusLink) {
+      // 5. IndexedDB hit with matching statusLink and attempt — promote to memory
+      if (dbEntry && runInfo
+          && dbEntry.statusLink === runInfo.statusLink
+          && dbEntry.attempt === runInfo.attempt) {
         this.setMemoryCache(memKey, dbEntry);
         return;
       }
 
       // 6. No completed run — cache the empty result
       const changeInfo: CoverageChangeInfo = {changeNum, patchNum, jenkinsUrl: jenkins.url};
-      if (!statusLink) {
+      if (!runInfo) {
         const entry: CoverageCacheEntry = {
-          changeInfo, statusLink: null,
+          changeInfo, statusLink: null, attempt: null,
           projectResponse: null, ranges: null, percentages: null,
         };
         this.setMemoryCache(memKey, entry);
@@ -436,12 +441,13 @@ export class CoverageClient {
       }
 
       // 7. Fetch fresh coverage data
-      const {projectResponse, modifiedLines} = await this.fetchAllCoverage(jenkins, repo, statusLink)
+      const {projectResponse, modifiedLines} = await this.fetchAllCoverage(jenkins, repo, runInfo.statusLink)
         .catch(e => { console.warn('checks-jenkins: coverage fetch failed', e); return {projectResponse: null, modifiedLines: null}; });
 
       const entry: CoverageCacheEntry = {
         changeInfo,
-        statusLink,
+        statusLink: runInfo.statusLink,
+        attempt: runInfo.attempt,
         projectResponse,
         ranges: this.parseRanges(modifiedLines),
         percentages: this.computePercentages(modifiedLines),
@@ -553,6 +559,7 @@ export class CoverageClient {
         responseRuns.push({
           checkName: 'Code Coverage',
           status: RunStatus.COMPLETED,
+          attempt: entry?.attempt ?? undefined,
           results: coverageResults,
           statusLink: entry?.statusLink ? `${entry.statusLink}coverage` : undefined,
         });
