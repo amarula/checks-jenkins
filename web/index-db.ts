@@ -19,23 +19,36 @@
  */
 export type RequestKey = [name: string, changeNumber: number, patchsetNumber: number, numberOfRuns: number];
 
+/**
+ * Coverage cache key: [jenkinsName, changeNumber, patchsetNumber]
+ */
+export type CoverageCacheKey = [name: string, changeNumber: number, patchsetNumber: number];
+
+type CacheKey = RequestKey | CoverageCacheKey;
+
 interface CacheEntry<T> {
-  key: RequestKey;
+  key: CacheKey;
   value: T;
   lastAccessed: number;
 }
+
+/** Current DB version — v2 adds coverage_store alongside request_store. */
+const DB_VERSION = 2;
 
 /**
  * A persistent LRU cache for browser request data using IndexedDB.
  * Automatically evicts older entries when capacity is reached and
  * prunes stale run data when the number of runs for a specific change changes.
+ *
+ * Supports multiple object stores within a single database:
+ *  - "request_store"  — fetcher check-run data (4-element RequestKey)
+ *  - "coverage_store" — coverage report data (3-element CoverageCacheKey)
  */
 export class RequestLRUCache<T> {
   private dbName: string = "GerritRequestDB";
-  private storeName: string = "request_store";
   private db: IDBDatabase | null = null;
 
-  constructor(private capacity: number) {}
+  constructor(private capacity: number, private storeName: string) {}
 
   /**
    * Initializes the database connection and object stores.
@@ -43,13 +56,16 @@ export class RequestLRUCache<T> {
   async init(): Promise<void> {
     if (this.db) return;
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 1);
+      const request = indexedDB.open(this.dbName, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        if (!db.objectStoreNames.contains(this.storeName)) {
-          const store = db.createObjectStore(this.storeName, { keyPath: "key" });
-          // Index for LRU eviction logic
+        if (!db.objectStoreNames.contains("request_store")) {
+          const store = db.createObjectStore("request_store", { keyPath: "key" });
+          store.createIndex("lastAccessed", "lastAccessed");
+        }
+        if (!db.objectStoreNames.contains("coverage_store")) {
+          const store = db.createObjectStore("coverage_store", { keyPath: "key" });
           store.createIndex("lastAccessed", "lastAccessed");
         }
       };
@@ -65,16 +81,16 @@ export class RequestLRUCache<T> {
   /**
    * Retrieves data and updates its 'lastAccessed' timestamp.
    */
-  async get(key: RequestKey): Promise<T | undefined> {
+  async get(key: CacheKey): Promise<T | undefined> {
     await this.init();
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction(this.storeName, "readwrite");
       const store = transaction.objectStore(this.storeName);
 
-      const request = store.get(key);
+      const request = store.get(key as IDBValidKey);
 
       request.onsuccess = () => {
-        const entry = request.result as CacheEntry<T>;
+        const entry = request.result as CacheEntry<T> | undefined;
         if (entry) {
           // Update timestamp to move this entry to the "Recently Used" end
           entry.lastAccessed = Date.now();
@@ -90,45 +106,59 @@ export class RequestLRUCache<T> {
 
   /**
    * Stores data in the cache.
-   * Logic:
-   * 1. If entries exist for the same [name, change, patch] but DIFFERENT [runs], they are deleted.
-   * 2. If the cache exceeds capacity, the oldest entry (by lastAccessed) is evicted.
+   *
+   * For 4-element fetcher keys: deletes stale entries for the same
+   * [name, change, patch] with a different [runs] count before inserting.
+   *
+   * For coverage keys (≠ 4 elements): simple LRU eviction — overwrites
+   * any existing entry with the same key, evicts oldest if over capacity.
    */
-  async put(key: RequestKey, value: T): Promise<void> {
+  async put(key: CacheKey, value: T): Promise<void> {
     await this.init();
-    const [name, patch, change, runs] = key;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction(this.storeName, "readwrite");
       const store = transaction.objectStore(this.storeName);
 
-      // Step 1: Query for all runs related to this change/patch
-      const range = IDBKeyRange.bound([name, patch, change, 0], [name, patch, change, Infinity]);
-      const cursorRequest = store.openCursor(range);
-
-      cursorRequest.onsuccess = (e) => {
-        const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
-        if (cursor) {
-          const existingKey = cursor.key as RequestKey;
-          if (existingKey[2] !== runs) {
-            cursor.delete();
+      const doPut = () => {
+        const countReq = store.count();
+        countReq.onsuccess = () => {
+          if (countReq.result >= this.capacity) {
+            const index = store.index("lastAccessed");
+            index.openCursor().onsuccess = (ev) => {
+              const lruCursor = (ev.target as IDBRequest<IDBCursorWithValue>).result;
+              if (lruCursor) lruCursor.delete();
+            };
           }
-          cursor.continue();
-        } else {
-          const countReq = store.count();
-          countReq.onsuccess = () => {
-            if (countReq.result >= this.capacity) {
-              const index = store.index("lastAccessed");
-              index.openCursor().onsuccess = (ev) => {
-                const lruCursor = (ev.target as IDBRequest<IDBCursorWithValue>).result;
-                if (lruCursor) lruCursor.delete();
-              };
-            }
-            const entry: CacheEntry<T> = { key, value, lastAccessed: Date.now() };
-            store.put(entry);
-          };
-        }
+          const entry: CacheEntry<T> = { key, value, lastAccessed: Date.now() };
+          store.put(entry);
+        };
       };
+
+      // Staleness pruning only applies to 4-element fetcher keys
+      if (key.length >= 4) {
+        const [name, patch, change, runs] = key;
+        const range = IDBKeyRange.bound(
+          [name, patch, change, 0] as IDBValidKey,
+          [name, patch, change, Infinity] as IDBValidKey
+        );
+        const cursorRequest = store.openCursor(range);
+
+        cursorRequest.onsuccess = (e) => {
+          const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+          if (cursor) {
+            const existingKey = cursor.key as RequestKey;
+            if (existingKey[3] !== runs) {
+              cursor.delete();
+            }
+            cursor.continue();
+          } else {
+            doPut();
+          }
+        };
+      } else {
+        doPut();
+      }
 
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);

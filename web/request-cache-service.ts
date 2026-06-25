@@ -17,16 +17,26 @@
 import { RequestLRUCache } from './index-db';
 
 const CACHE_CAPACITY = 100;
+const COVERAGE_CACHE_CAPACITY = 50;
 
 class RequestCacheService {
-  private static instance: RequestLRUCache<any>;
+  private static fetcherInstance: RequestLRUCache<any>;
+  private static coverageInstance: RequestLRUCache<any>;
 
-  static getInstance(): RequestLRUCache<any> {
-    if (!this.instance) {
-      this.instance = new RequestLRUCache<any>(CACHE_CAPACITY);
+  static getFetcherInstance(): RequestLRUCache<any> {
+    if (!this.fetcherInstance) {
+      this.fetcherInstance = new RequestLRUCache<any>(CACHE_CAPACITY, "request_store");
     }
-    return this.instance;
+    return this.fetcherInstance;
+  }
+
+  static getCoverageInstance(): RequestLRUCache<any> {
+    if (!this.coverageInstance) {
+      this.coverageInstance = new RequestLRUCache<any>(COVERAGE_CACHE_CAPACITY, "coverage_store");
+    }
+    return this.coverageInstance;
   }
 }
 
-export const cacheService = RequestCacheService.getInstance();
+export const cacheService = RequestCacheService.getFetcherInstance();
+export const coverageCacheService = RequestCacheService.getCoverageInstance();

@@ -33,6 +33,8 @@ import {
   RevisionInfo,
 } from '@gerritcodereview/typescript-api/rest-api';
 import {Config} from './fetcher';
+import {CoverageCacheKey} from './index-db';
+import {coverageCacheService} from './request-cache-service';
 
 export declare interface PercentageData {
   absolute?: number;
@@ -139,6 +141,8 @@ function parseProject(pathName: string): string {
 
 interface CoverageCacheEntry {
   changeInfo: CoverageChangeInfo;
+  /** Current statusLink from the completed run.  null when no run found. */
+  statusLink: string | null;
   /** Raw project-level response (for checks). */
   projectResponse: ProjectCoverageResponse | null;
   /** Parsed per-file ranges (for diff annotations). */
@@ -148,6 +152,8 @@ interface CoverageCacheEntry {
 }
 
 export class CoverageClient {
+  private static readonly MEMORY_CACHE_LIMIT = 10;
+
   private plugin: PluginApi;
 
   /** Cached Jenkins configs, keyed by repo. */
@@ -156,12 +162,17 @@ export class CoverageClient {
   /** In-flight config fetch to dedupe concurrent calls. */
   private configsPromise: Promise<Config[]> | null = null;
 
-  /** Cached coverage data. */
-  private cached: CoverageCacheEntry | null = null;
-  private cachedLinkStatus: string | null = null;
-  /** In-flight cache update key and promise to dedupe concurrent calls. */
-  private cachedPromiseKey: string | null = null;
-  private cachedPromise: Promise<void> | null = null;
+  /**
+   * In-memory LRU cache for coverage entries.
+   * Key: JSON.stringify([jenkinsName, changeNum, patchNum])
+   */
+  private cache: Map<string, CoverageCacheEntry> = new Map();
+
+  /**
+   * In-flight fetch promises, keyed the same way as `cache`.
+   * Deduplicates concurrent calls for the same change+patchset.
+   */
+  private pendingFetches: Map<string, Promise<void>> = new Map();
 
   constructor(plugin: PluginApi) {
     this.provideCoverageRanges = this.provideCoverageRanges.bind(this);
@@ -333,44 +344,113 @@ export class CoverageClient {
     return ranges;
   }
 
+  // ---- Cache helpers ----
+
+  private makeMemoryKey(jenkinsName: string, changeNum: number, patchNum: number): string {
+    return JSON.stringify([jenkinsName, changeNum, patchNum]);
+  }
+
+  /**
+   * Insert / touch `entry` in the in-memory LRU map, evicting the oldest
+   * entry when the map exceeds MEMORY_CACHE_LIMIT.
+   */
+  private setMemoryCache(key: string, entry: CoverageCacheEntry): void {
+    // Delete-then-set to move the key to the "most recently used" end
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+    if (this.cache.size > CoverageClient.MEMORY_CACHE_LIMIT) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
+  }
+
   // ---- Cache management ----
 
+  /**
+   * Populates the coverage cache for the given change+patchset.
+   *
+   * Lookup order:
+   *  1. In-memory Map (fast, survives same-page navigation)
+   *  2. IndexedDB         (persistent, survives page reloads)
+   *
+   * On an IndexedDB hit we still call {@link findCompletedRun} (cheap) to
+   * check whether the cached statusLink is still current.  Only when the
+   * link has changed (new build completed) do we re-fetch the heavy
+   * coverage payloads.
+   */
   private async updateCache(
     jenkins: Config, repo: string, changeNum: number, patchNum: number
   ): Promise<void> {
     if (isNaN(changeNum) || isNaN(patchNum) || changeNum <= 0 || patchNum <= 0) return;
 
-    const changeInfo: CoverageChangeInfo = {changeNum, patchNum, jenkinsUrl: jenkins.url};
-    const key = JSON.stringify(changeInfo);
-    if (this.cached && JSON.stringify(this.cached.changeInfo) === key) return;
+    const memKey = this.makeMemoryKey(jenkins.name, changeNum, patchNum);
 
-    // Dedupe concurrent calls for the same change
-    if (this.cachedPromiseKey === key && this.cachedPromise) return this.cachedPromise;
+    // 1. In-memory hit — touch and return
+    const existing = this.cache.get(memKey);
+    if (existing) {
+      this.setMemoryCache(memKey, existing);
+      return;
+    }
+
+    // 2. Dedupe concurrent calls for the same change
+    const pending = this.pendingFetches.get(memKey);
+    if (pending) return pending;
 
     let resolve: () => void;
-    this.cachedPromiseKey = key;
-    this.cachedPromise = new Promise(r => { resolve = r; });
+    const promise = new Promise<void>(r => { resolve = r; });
+    this.pendingFetches.set(memKey, promise);
 
     try {
-      const statusLink = await this.findCompletedRun(jenkins, repo, changeNum, patchNum);
-      if (!statusLink) {
-        this.cached = {changeInfo, projectResponse: null, ranges: null, percentages: null};
-        this.cachedLinkStatus = null;
+      // 3. Try IndexedDB
+      const cacheKey: CoverageCacheKey = [jenkins.name, changeNum, patchNum];
+      const dbEntry = await coverageCacheService.get(cacheKey);
+
+      // 4. Check whether the cached statusLink is still current (cheap call)
+      let statusLink: string | null = null;
+      try {
+        statusLink = await this.findCompletedRun(jenkins, repo, changeNum, patchNum);
+      } catch {
+        // If the runs endpoint fails but we have cached data, serve it stale
+        if (dbEntry) {
+          this.setMemoryCache(memKey, dbEntry);
+          return;
+        }
+      }
+
+      // 5. IndexedDB hit with matching statusLink — promote to memory
+      if (dbEntry && statusLink && dbEntry.statusLink === statusLink) {
+        this.setMemoryCache(memKey, dbEntry);
         return;
       }
-      this.cachedLinkStatus = statusLink;
 
+      // 6. No completed run — cache the empty result
+      const changeInfo: CoverageChangeInfo = {changeNum, patchNum, jenkinsUrl: jenkins.url};
+      if (!statusLink) {
+        const entry: CoverageCacheEntry = {
+          changeInfo, statusLink: null,
+          projectResponse: null, ranges: null, percentages: null,
+        };
+        this.setMemoryCache(memKey, entry);
+        await coverageCacheService.put(cacheKey, entry);
+        return;
+      }
+
+      // 7. Fetch fresh coverage data
       const {projectResponse, modifiedLines} = await this.fetchAllCoverage(jenkins, repo, statusLink)
         .catch(e => { console.warn('checks-jenkins: coverage fetch failed', e); return {projectResponse: null, modifiedLines: null}; });
 
-      this.cached = {
+      const entry: CoverageCacheEntry = {
         changeInfo,
+        statusLink,
         projectResponse,
         ranges: this.parseRanges(modifiedLines),
         percentages: this.computePercentages(modifiedLines),
       };
+
+      this.setMemoryCache(memKey, entry);
+      await coverageCacheService.put(cacheKey, entry);
     } finally {
-      this.cachedPromise = null;
+      this.pendingFetches.delete(memKey);
       resolve!();
     }
   }
@@ -387,7 +467,8 @@ export class CoverageClient {
       const jenkins = await this.ensureConfig(repo);
       if (!jenkins || !this.isEnabled()) return undefined;
       await this.updateCache(jenkins, repo, changeNum, patchNum);
-      return this.cached?.ranges?.[path] || [];
+      const entry = this.cache.get(this.makeMemoryKey(jenkins.name, changeNum, patchNum));
+      return entry?.ranges?.[path] || [];
     } catch { return undefined; }
   }
 
@@ -409,7 +490,8 @@ export class CoverageClient {
       const jenkins = await this.ensureConfig(repo);
       if (!jenkins || !this.isEnabled()) return null;
       await this.updateCache(jenkins, repo, Number(changeNum), Number(patchNum));
-      return this.cached?.percentages?.[path] || null;
+      const entry = this.cache.get(this.makeMemoryKey(jenkins.name, Number(changeNum), Number(patchNum)));
+      return entry?.percentages?.[path] || null;
     } catch { return null; }
   }
 
@@ -425,8 +507,9 @@ export class CoverageClient {
 
       await this.updateCache(jenkins, project, changeNum, patchNum);
 
-      const projectResp = this.cached?.projectResponse;
-      const percentages = this.cached?.percentages || {};
+      const entry = this.cache.get(this.makeMemoryKey(jenkins.name, changeNum, patchNum));
+      const projectResp = entry?.projectResponse;
+      const percentages = entry?.percentages || {};
       const reason = this.getLowCoverageReason(commitMessage);
       const responseRuns: CheckRun[] = [];
       const coverageResults: CheckResult[] = [];
@@ -471,7 +554,7 @@ export class CoverageClient {
           checkName: 'Code Coverage',
           status: RunStatus.COMPLETED,
           results: coverageResults,
-          statusLink: `${this.cachedLinkStatus}coverage`,
+          statusLink: entry?.statusLink ? `${entry.statusLink}coverage` : undefined,
         });
       }
 
