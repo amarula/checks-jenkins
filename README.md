@@ -5,19 +5,22 @@
 [![Gerrit Plugin](https://img.shields.io/badge/Gerrit-Plugin-blue.svg)](https://www.gerritcodereview.com/)
 
 `checks-jenkins` is a Gerrit plugin that implements the [Gerrit Checks API](https://gerrit-review.googlesource.com/Documentation/pg-plugin-checks-api.html) specifically for **Jenkins CI**.
-It surfaces Jenkins build statuses, logs, and test results directly within the Gerrit change screen, providing a seamless CI/CD feedback loop for developers.
+It surfaces Jenkins build statuses, logs, test results, and code coverage metrics directly within the Gerrit change screen, providing a seamless CI/CD feedback loop for developers.
 
 ## 🚀 Features
 
 - **Real-time Status**: Monitor Jenkins build progress (Pending, Running, Success, Failure) within the Gerrit UI.
-- **Detailed Feedback**: Provides links to build artifacts, warnings-ng reports, and test failures.
+- **Detailed Feedback**: Provides links to build artifacts, warnings-ng reports, JUnit test failures, and build-failure explanations.
+- **Code Coverage**: Per-file coverage annotations on diffs, file-list columns, and a low-coverage alert check (requires Jenkins [Code Coverage API](https://plugins.jenkins.io/code-coverage-api/) plugin).
 - **Rerun Triggers**: Directly trigger a Jenkins job rerun from the Gerrit interface.
 - **Streamlined Workflow**: Reduces the need to leave Gerrit to check CI status on the Jenkins dashboard.
 
 ## 🛠 Prerequisites
 
 - **Gerrit**: 3.x or higher.
-- **Jenkins**: A running instance with the [Checks API Plugin](https://plugins.jenkins.io/gerrit-checks-api/) installed.
+- **Jenkins**: A running instance with:
+  - [Gerrit Checks API Plugin](https://plugins.jenkins.io/gerrit-checks-api/)
+  - [Code Coverage API Plugin](https://plugins.jenkins.io/code-coverage-api/) *(optional — for coverage features)*
 - **Core Checks Plugin**: This plugin requires the standard Gerrit `checks` plugin to be installed.
 
 ## 📦 Installation
@@ -40,13 +43,81 @@ It surfaces Jenkins build statuses, logs, and test results directly within the G
 
 ## ⚙️ Configuration
 
-1. **Generate a Jenkins token**
-   ```bash
-   [plugin "checks-jenkins"]
-       jenkinsUrl = [https://jenkins.example.com/](https://jenkins.example.com/)
-       username = gerrit-ci-user
-       token = your-jenkins-api-token
-   ```
+The plugin uses Gerrit's project-level or global configuration under the `jenkins` section.
+
+### Basic Jenkins connection
+
+**`gerrit.config`** (global) or **`project.config`** (per-project, in `refs/meta/config`):
+
+```ini
+[plugin "checks-jenkins"]
+    url = https://jenkins.example.com/
+    user = gerrit-ci-user
+```
+
+Authentication uses the `user` field. If the Gerrit user is already authenticated with Jenkins (e.g., via SSO), omit `user` and the plugin uses cookie-based `credentials: 'include'`.
+
+### Multi-instance (per-project)
+
+```ini
+[jenkins "my-jenkins"]
+    url = https://jenkins.example.com/
+    user = gerrit-ci-user
+```
+
+The `name` field is the subsection key (`my-jenkins`). Multiple Jenkins instances can be configured per project.
+
+### Code Coverage
+
+Enable coverage reporting by adding the `coverage` key:
+
+```ini
+[plugin "checks-jenkins"]
+    url = https://jenkins.example.com/
+    user = gerrit-ci-user
+    coverage = true
+```
+
+Or per-instance:
+
+```ini
+[jenkins "my-jenkins"]
+    url = https://jenkins.example.com/
+    user = gerrit-ci-user
+    coverage = true
+```
+
+When enabled, the plugin queries the Jenkins [Code Coverage API](https://plugins.jenkins.io/code-coverage-api/) endpoints for the most recent completed build and surfaces:
+
+| Feature | Location | Description |
+|---|---|---|
+| **Line coverage** | Diff view | Covered / missed annotations on modified lines (`COVERED` / `NOT_COVERED` ranges) |
+| **File percentages** | File list columns | Absolute and incremental coverage percentages per file |
+| **Low-coverage alert** | Checks tab | `Code Coverage` check run warns when a file's incremental coverage drops below 70% |
+| **Project stats** | Checks tab | Fallback summary with line/branch/file/class-level coverage when no files are below threshold |
+
+### Low-Coverage-Reason footer
+
+To suppress low-coverage warnings on a change (demoting them from `WARNING` to `INFO`), add a footer to the commit message:
+
+```
+Low-Coverage-Reason: HARD_TO_TEST
+```
+
+Valid reasons:
+
+| Prefix | Meaning |
+|---|---|
+| `TRIVIAL_CHANGE` | Minimal logic change, not worth testing |
+| `TESTS_ARE_DISABLED` | Tests exist but are temporarily disabled |
+| `TESTS_IN_SEPARATE_CL` | Tests will be added in a follow-up change |
+| `HARD_TO_TEST` | The change is inherently difficult to test |
+| `COVERAGE_UNDERREPORTED` | Coverage tool misses lines that are actually exercised |
+| `LARGE_SCALE_REFACTOR` | Behavior-preserving restructuring |
+| `EXPERIMENTAL_CODE` | Prototype or experimental change |
+| `OTHER` | None of the above (provide details after prefix) |
+
+A malformed reason (not starting with one of the prefixes above) triggers a separate `Low-Coverage-Reason Format Check` warning.
 
 ## 🤝 Contributing
 
