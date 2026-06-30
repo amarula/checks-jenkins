@@ -192,32 +192,42 @@ export class ChecksFetcher implements ChecksProvider {
       const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
 
       // Phase A: Enrich error results with explanations (parallel across runs).
+      // Skip entirely if the endpoint was already marked unavailable on a prior poll.
       const completedRuns = data.runs.filter((run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED);
-      await Promise.all(completedRuns.map(async (run: JenkinsCheckRun) => {
-        if (!run.results) run.results = [];
-        const errorResult = run.results.find((result: CheckResult) => result.category === Category.ERROR);
-        if (!errorResult) return;
-        const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
-        if (errorMessage) {
-          const lines = errorMessage.split('\n');
-          const parsedSummary = lines[0].trim();
-          const detailedMessage = lines.slice(1).join('\n').trim();
-          const markdownMessage = detailedMessage
-            ? `\`\`\`text\n${detailedMessage}\n\`\`\``
-            : 'No additional details provided.';
-          errorResult.summary = parsedSummary;
-          errorResult.message = markdownMessage;
-          run.statusDescription = parsedSummary;
-        }
-      }));
+      if (!this.isUnavailable(jenkins.name, 'error-explanation')) {
+        await Promise.all(completedRuns.map(async (run: JenkinsCheckRun) => {
+          if (!run.results) run.results = [];
+          const errorResult = run.results.find((result: CheckResult) => result.category === Category.ERROR);
+          if (!errorResult) return;
+          const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
+          if (errorMessage) {
+            const lines = errorMessage.split('\n');
+            const parsedSummary = lines[0].trim();
+            const detailedMessage = lines.slice(1).join('\n').trim();
+            const markdownMessage = detailedMessage
+              ? `\`\`\`text\n${detailedMessage}\n\`\`\``
+              : 'No additional details provided.';
+            errorResult.summary = parsedSummary;
+            errorResult.message = markdownMessage;
+            run.statusDescription = parsedSummary;
+          }
+        }));
+      }
 
       // Phase B: Fetch warnings + test results (parallel across runs and both types).
+      // Skip endpoints that were already marked unavailable on a prior poll.
       const cachedData: CheckRun[] = await cacheService.get(key);
       if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
-        const enrichmentPromises = completedRuns.flatMap((run: JenkinsCheckRun) => [
-          this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt),
-          this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt),
-        ]);
+        const enrichmentPromises = completedRuns.flatMap((run: JenkinsCheckRun) => {
+          const promises: Promise<CheckRun[] | null>[] = [];
+          if (!this.isUnavailable(jenkins.name, 'warnings')) {
+            promises.push(this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt));
+          }
+          if (!this.isUnavailable(jenkins.name, 'tests')) {
+            promises.push(this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt));
+          }
+          return promises;
+        });
         const results = await Promise.all(enrichmentPromises);
         const warningsData = results.flat().filter(Boolean);
         if (warningsData.length > 0) {
@@ -279,6 +289,7 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
+    if (this.isUnavailable(jenkins.name, 'warnings')) return null;
 
     const toolsResult = await (async () => {
       try {
@@ -289,7 +300,8 @@ export class ChecksFetcher implements ChecksProvider {
     })();
 
     if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
-      return [];
+      this.markUnavailable(jenkins.name, 'warnings');
+      return null;
     }
 
     const toolsInfo: AnalysisResponse = await this.toJson(toolsResult);
@@ -360,6 +372,8 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   async buildTestResults(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
+    if (this.isUnavailable(jenkins.name, 'tests')) return null;
+
     interface TestCase {
       className: string;
       errorDetails: string | null;
@@ -386,7 +400,8 @@ export class ChecksFetcher implements ChecksProvider {
     })();
 
     if (testResult === null || (testResult.ok != undefined && !testResult.ok)) {
-      return [];
+      this.markUnavailable(jenkins.name, 'tests');
+      return null;
     }
 
     const testReport: JunitResult = await this.toJson(testResult);
@@ -427,6 +442,8 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   async explainBuildFailure(jenkins: Config, changeData: ChangeData, statusLink: string) {
+    if (this.isUnavailable(jenkins.name, 'error-explanation')) return null;
+
     const errorResult = await (async () => {
       try {
         return await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}error-explanation/api/json`, "GET");
@@ -436,6 +453,7 @@ export class ChecksFetcher implements ChecksProvider {
     })();
 
     if (errorResult === null || (errorResult.ok != undefined && !errorResult.ok)) {
+      this.markUnavailable(jenkins.name, 'error-explanation');
       return null;
     }
 
