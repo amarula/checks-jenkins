@@ -1,6 +1,6 @@
 load("//tools/bzl:plugin.bzl", "gerrit_plugin")
 load("//tools/js:eslint.bzl", "plugin_eslint")
-load("//tools/bzl:js.bzl", "gerrit_js_bundle")
+load("//tools/bzl:js.bzl", "gerrit_js_bundle", "web_test_runner")
 load("@npm//@bazel/typescript:index.bzl", "ts_config", "ts_project")
 
 package_group(
@@ -38,6 +38,32 @@ gerrit_js_bundle(
     name = "checks-jenkins",
     srcs = [":checks-jenkins-ts"],
     entry_point = "_bazel_ts_out/plugin.js",
+)
+
+ts_project(
+    name = "checks-jenkins-ts-tests",
+    srcs = glob(["**/*.ts"]),
+    incremental = True,
+    out_dir = "_bazel_ts_out_tests",
+    tsc = "//tools/node_tools:tsc-bin",
+    tsconfig = ":tsconfig",
+    deps = [
+        "@plugins_npm//:node_modules",
+        "@ui_dev_npm//:node_modules",
+        "@plugins_npm//@gerritcodereview/typescript-api",
+        "@plugins_npm//lit",
+    ],
+)
+
+web_test_runner(
+    name = "web_test_runner",
+    srcs = ["web_test_runner.sh"],
+    data = [
+        ":checks-jenkins-ts-tests",
+        ":tsconfig",
+        "@plugins_npm//:node_modules",
+        "@ui_dev_npm//:node_modules",
+    ],
 )
 
 # Creates lint_test and lint_bin rules.
