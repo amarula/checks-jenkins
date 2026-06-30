@@ -285,71 +285,67 @@ export class ChecksFetcher implements ChecksProvider {
     if (toolsInfo === null) {
       return [];
     }
-    const checkRuns: CheckRun[] = [];
+    // Fetch all tool issues in parallel — each tool's endpoint is independent.
+    const toolResults = await Promise.allSettled(
+      toolsInfo.tools.map(async (tool): Promise<CheckRun | null> => {
+        const toolResp = await (async () => {
+          try {
+            return await this.fetchFromJenkins(jenkins, changeData.repo,
+              `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
+          } catch (e) {
+            return null;
+          }
+        })();
 
-    for (const tool of toolsInfo.tools) {
-      const toolsResult = await (async() => {
-        try {
-          return await this.fetchFromJenkins(jenkins, changeData.repo,
-            `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
-        } catch(e) {
+        if (toolResp === null || (toolResp.ok != undefined && !toolResp.ok)) {
           return null;
         }
-      })();
 
-      if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
-        continue;
-      }
+        const warnings: AnalysisReport = await this.toJson(toolResp);
+        if (warnings === null) {
+          return null;
+        }
 
-      const warnings: AnalysisReport = await this.toJson(toolsResult);
-      if (warnings === null) {
-        continue;
-      }
-      let results: CheckResult[] = [];
-
-      for (const issue of warnings.issues) {
-        results.push({
-          show_on_unchanged_lines: false,
-          category: this.warningNgGetCategory(tool),
-          summary: issue.message,
-          message: issue.toString,
-          tags: [{
-            name: `${tool.name}`,
-            color: this.warningNgGetTagColor(issue),
-            tooltip: issue.message
-          }],
-          links: [{
-            url: `${tool.latestUrl}`,
-            icon: LinkIcon.EXTERNAL,
-            primary: true,
-          },],
-          codePointers: [{
-            path: issue.fileName,
-            range: {
-              start_line: issue.lineStart,
-              start_character: issue.columnStart - 1,
-              end_line: issue.lineEnd,
-              end_character: issue.columnEnd
-            }
-          }]
-        });
-      }
-
-      checkRuns.push({
-        change: changeData.changeNumber,
-        patchset: changeData.patchsetNumber,
-        checkName: `${tool.name}`,
-        status: RunStatus.COMPLETED,
-        statusLink: `${tool.latestUrl}`,
-        attempt: attempt,
-        actions: [],
-        results: results.slice(),
+        return {
+          change: changeData.changeNumber,
+          patchset: changeData.patchsetNumber,
+          checkName: `${tool.name}`,
+          status: RunStatus.COMPLETED,
+          statusLink: `${tool.latestUrl}`,
+          attempt: attempt,
+          actions: [],
+          results: warnings.issues.map(issue => ({
+            show_on_unchanged_lines: false,
+            category: this.warningNgGetCategory(tool),
+            summary: issue.message,
+            message: issue.toString,
+            tags: [{
+              name: `${tool.name}`,
+              color: this.warningNgGetTagColor(issue),
+              tooltip: issue.message
+            }],
+            links: [{
+              url: `${tool.latestUrl}`,
+              icon: LinkIcon.EXTERNAL,
+              primary: true,
+            }],
+            codePointers: [{
+              path: issue.fileName,
+              range: {
+                start_line: issue.lineStart,
+                start_character: issue.columnStart - 1,
+                end_line: issue.lineEnd,
+                end_character: issue.columnEnd
+              }
+            }]
+          })),
+        };
       })
+    );
 
-      results = [];
-    }
-
-    return checkRuns;
+    return toolResults
+      .filter((r): r is PromiseFulfilledResult<CheckRun> => r.status === 'fulfilled' && r.value !== null)
+      .map(r => r.value);
   }
 
   async buildTestResults(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
