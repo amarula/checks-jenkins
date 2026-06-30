@@ -406,20 +406,18 @@ export class CoverageClient {
     this.pendingFetches.set(memKey, promise);
 
     try {
-      // 3. Try IndexedDB
+      // 3. Read IndexedDB and check current run info in parallel.
       const cacheKey: CoverageCacheKey = [jenkins.name, changeNum, patchNum];
-      const dbEntry = await coverageCacheService.get(cacheKey);
+      const [dbEntry, runInfo] = await Promise.all([
+        coverageCacheService.get(cacheKey),
+        this.findCompletedRun(jenkins, repo, changeNum, patchNum)
+          .catch(() => null),
+      ]);
 
-      // 4. Check whether the cached statusLink is still current (cheap call)
-      let runInfo: {statusLink: string; attempt: number} | null = null;
-      try {
-        runInfo = await this.findCompletedRun(jenkins, repo, changeNum, patchNum);
-      } catch {
-        // If the runs endpoint fails but we have cached data, serve it stale
-        if (dbEntry) {
-          this.setMemoryCache(memKey, dbEntry);
-          return;
-        }
+      // If the runs endpoint failed but we have cached data, serve it stale
+      if (!runInfo && dbEntry) {
+        this.setMemoryCache(memKey, dbEntry);
+        return;
       }
 
       // 5. IndexedDB hit with matching statusLink and attempt — promote to memory
