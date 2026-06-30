@@ -17,10 +17,11 @@
 import '@gerritcodereview/typescript-api/gerrit';
 import {ChecksFetcher} from './fetcher';
 import {CoverageClient} from './coverage';
-import {BaseCoverageComponent} from './coverage-percentage-views';
+import {BaseComponent, BaseCoverageComponent} from './coverage-percentage-views';
 import './coverage-percentage-views';
 import {ChangeData} from '@gerritcodereview/typescript-api/checks';
 import {EventType, PluginApi} from '@gerritcodereview/typescript-api/plugin';
+import {ChangeInfo, RevisionInfo} from '@gerritcodereview/typescript-api/rest-api';
 
 window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
   const fetcher = new ChecksFetcher(plugin);
@@ -60,17 +61,24 @@ window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
     console.warn('checks-jenkins: annotationApi not available', e);
   }
 
-  // 2. Prefetch coverage data when a change is shown
-  plugin.on(EventType.SHOW_CHANGE, coverageClient.prefetchCoverageRanges);
+  // 2. Prefetch coverage data when a change is shown,
+  //    and re-evaluate column visibility for the new project.
+  plugin.on(EventType.SHOW_CHANGE, async (change: ChangeInfo, revision: RevisionInfo) => {
+    coverageClient.prefetchCoverageRanges(change, revision);
+    const show = await coverageClient.showPercentageColumns();
+    for (const instance of BaseComponent.instances) {
+      instance.shown = show;
+    }
+  });
 
   // 3. Dynamic custom components for coverage percentage columns
   function onAttached(needsProvider = false) {
     return (v: HTMLElement) => {
       coverageClient.showPercentageColumns().then((show: boolean) => {
-        const view = v as BaseCoverageComponent;
+        const view = v as BaseComponent;
         view.shown = show;
         if (needsProvider) {
-          view.provider = coverageClient.provideCoveragePercentages;
+          (v as BaseCoverageComponent).provider = coverageClient.provideCoveragePercentages;
         }
       });
     };

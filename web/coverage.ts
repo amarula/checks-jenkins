@@ -195,7 +195,7 @@ export class CoverageClient {
   }
 
   private async ensureConfig(repo: string): Promise<Config | null> {
-    if (this.configs && repo === this.configsRepo) return this.configs?.[0] ?? null;
+    if (this.configs && repo === this.configsRepo && !this.configsPromise) return this.configs?.[0] ?? null;
     // Dedupe concurrent calls
     if (!this.configsPromise || repo !== this.configsRepo) {
       this.configsPromise = this.fetchConfig(repo);

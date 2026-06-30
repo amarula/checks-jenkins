@@ -20,10 +20,16 @@ import {customElement, property} from 'lit/decorators.js';
 import {PercentageData} from './coverage';
 
 const COMMON_CSS = css`
+  :host {
+    display: inline-block;
+    min-width: 3.5em;
+    box-sizing: border-box;
+  }
   .coverage-percentage-column {
     display: inline-block;
     min-width: 3.5em;
     text-align: center;
+    width: 100%;
   }
   .coverage-percentage-column.hidden {
     display: none;
@@ -31,21 +37,30 @@ const COMMON_CSS = css`
 `;
 
 /** Base class for all components */
-class BaseComponent extends LitElement {
-  @property() shown = false;
+export class BaseComponent extends LitElement {
+  /** Set of live instances so plugin.ts can broadcast visibility changes. */
+  static instances = new Set<BaseComponent>();
+
+  /** Default visible – columns occupy layout space from first paint.
+   *  Only hidden when config confirms coverage is disabled. */
+  @property() shown = true;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    BaseComponent.instances.add(this);
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    BaseComponent.instances.delete(this);
+  }
 
   override render() {
-    if (this.shown) {
-      return html`coverage-percentage-column`;
-    }
-    return html`coverage-percentage-column hidden`;
+    return html`<div class="${this.computeCoverageClass()}"><slot></slot></div>`;
   }
 
   protected computeCoverageClass(): string {
-    if (this.shown) {
-      return 'coverage-percentage-column';
-    }
-    return 'coverage-percentage-column hidden';
+    return this.shown ? 'coverage-percentage-column' : 'coverage-percentage-column hidden';
   }
 }
 
