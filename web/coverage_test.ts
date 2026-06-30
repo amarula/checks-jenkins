@@ -1,0 +1,299 @@
+/**
+ * @license
+ * Copyright (C) 2024 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+import './test/test-setup';
+import {assert} from '@open-wc/testing';
+import {
+  CoverageClient,
+  parsePct,
+  parseProject,
+  getLowCoverageReason,
+} from './coverage';
+import {
+  CoverageType,
+  Side,
+} from '@gerritcodereview/typescript-api/diff';
+import {PluginApi} from '@gerritcodereview/typescript-api/plugin';
+
+suite('parseProject', () => {
+  test('parses simple repo from gerrit URL path', () => {
+    assert.equal(parseProject('/c/repo-name/+/123'), 'repo-name');
+  });
+
+  test('parses repo with slashes', () => {
+    assert.equal(parseProject('/c/org/repo/+/456'), 'org/repo');
+  });
+
+  test('parses repo with numeric change number', () => {
+    assert.equal(parseProject('/c/myproject/+/789/5'), 'myproject');
+  });
+
+  test('throws on non-gerrit path', () => {
+    assert.throws(() => parseProject('/some/other/path'));
+  });
+
+  test('throws on path without + separator', () => {
+    assert.throws(() => parseProject('/c/repo-no-plus/123'));
+  });
+
+  test('throws on empty path', () => {
+    assert.throws(() => parseProject(''));
+  });
+});
+
+suite('parsePct', () => {
+  test('parses integer percentage', () => {
+    assert.equal(parsePct('88%'), 88);
+  });
+
+  test('parses decimal percentage', () => {
+    assert.equal(parsePct('88.44%'), 88.44);
+  });
+
+  test('parses percentage with plus sign', () => {
+    assert.equal(parsePct('+5.0%'), 5.0);
+  });
+
+  test('returns undefined for empty string', () => {
+    assert.isUndefined(parsePct(''));
+  });
+
+  test('returns undefined for undefined input', () => {
+    assert.isUndefined(parsePct(undefined));
+  });
+
+  test('returns undefined for non-numeric', () => {
+    assert.isUndefined(parsePct('abc'));
+  });
+
+  test('returns undefined for whitespace only', () => {
+    assert.isUndefined(parsePct('  '));
+  });
+});
+
+suite('getLowCoverageReason', () => {
+  test('extracts reason from commit message', () => {
+    assert.equal(
+      getLowCoverageReason('Low-Coverage-Reason: TRIVIAL_CHANGE'),
+      'TRIVIAL_CHANGE'
+    );
+  });
+
+  test('returns undefined when no reason present', () => {
+    assert.isUndefined(getLowCoverageReason('Some commit message'));
+  });
+
+  test('returns undefined for undefined input', () => {
+    assert.isUndefined(getLowCoverageReason(undefined));
+  });
+
+  test('returns undefined for empty string', () => {
+    assert.isUndefined(getLowCoverageReason(''));
+  });
+
+  test('extracts reason from multiline message', () => {
+    assert.equal(
+      getLowCoverageReason(
+        'Fix bug in coverage\n\nLow-Coverage-Reason: HARD_TO_TEST\n\nMore context'
+      ),
+      'HARD_TO_TEST'
+    );
+  });
+});
+
+suite('CoverageClient.computePercentages', () => {
+  let client: CoverageClient;
+
+  setup(() => {
+    client = new CoverageClient({} as unknown as PluginApi);
+  });
+
+  test('returns empty object for null response', () => {
+    const result = (client as any).computePercentages(null);
+    assert.deepEqual(result, {});
+  });
+
+  test('returns empty object for response without files', () => {
+    const result = (client as any).computePercentages({});
+    assert.deepEqual(result, {});
+  });
+
+  test('computes coverage percentage from covered and missed blocks', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/foo.ts',
+        modifiedLinesBlocks: [
+          {startLine: 1, endLine: 5, type: 'COVERED'},
+          {startLine: 6, endLine: 10, type: 'MISSED'},
+        ],
+      }],
+    };
+    const result = (client as any).computePercentages(resp);
+    assert.deepEqual(result, {
+      'src/foo.ts': {absolute: 50},
+    });
+  });
+
+  test('returns 100% for fully covered file', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/bar.ts',
+        modifiedLinesBlocks: [
+          {startLine: 1, endLine: 10, type: 'COVERED'},
+        ],
+      }],
+    };
+    const result = (client as any).computePercentages(resp);
+    assert.deepEqual(result, {
+      'src/bar.ts': {absolute: 100},
+    });
+  });
+
+  test('returns 0% for fully missed file', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/baz.ts',
+        modifiedLinesBlocks: [
+          {startLine: 1, endLine: 10, type: 'MISSED'},
+        ],
+      }],
+    };
+    const result = (client as any).computePercentages(resp);
+    assert.deepEqual(result, {
+      'src/baz.ts': {absolute: 0},
+    });
+  });
+
+  test('skips file with no modifiedLinesBlocks', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/empty.ts',
+      }],
+    } as any;
+    const result = (client as any).computePercentages(resp);
+    assert.deepEqual(result, {});
+  });
+
+  test('skips file with no fullyQualifiedFileName', () => {
+    const resp = {
+      files: [{
+        modifiedLinesBlocks: [
+          {startLine: 1, endLine: 5, type: 'COVERED'},
+        ],
+      }],
+    } as any;
+    const result = (client as any).computePercentages(resp);
+    assert.deepEqual(result, {});
+  });
+
+  test('handles multiple files', () => {
+    const resp = {
+      files: [
+        {
+          fullyQualifiedFileName: 'src/covered.ts',
+          modifiedLinesBlocks: [
+            {startLine: 1, endLine: 10, type: 'COVERED'},
+          ],
+        },
+        {
+          fullyQualifiedFileName: 'src/missed.ts',
+          modifiedLinesBlocks: [
+            {startLine: 1, endLine: 5, type: 'MISSED'},
+          ],
+        },
+      ],
+    };
+    const result = (client as any).computePercentages(resp);
+    assert.deepEqual(result, {
+      'src/covered.ts': {absolute: 100},
+      'src/missed.ts': {absolute: 0},
+    });
+  });
+});
+
+suite('CoverageClient.parseRanges', () => {
+  let client: CoverageClient;
+
+  setup(() => {
+    client = new CoverageClient({} as unknown as PluginApi);
+  });
+
+  test('returns empty object for null response', () => {
+    const result = (client as any).parseRanges(null);
+    assert.deepEqual(result, {});
+  });
+
+  test('returns empty object for response without files', () => {
+    const result = (client as any).parseRanges({});
+    assert.deepEqual(result, {});
+  });
+
+  test('parses COVERED block to CoverageType.COVERED', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/foo.ts',
+        modifiedLinesBlocks: [
+          {startLine: 1, endLine: 5, type: 'COVERED'},
+        ],
+      }],
+    };
+    const result = (client as any).parseRanges(resp);
+    assert.equal(result['src/foo.ts'].length, 1);
+    assert.equal(result['src/foo.ts'][0].type, CoverageType.COVERED);
+    assert.equal(result['src/foo.ts'][0].side, Side.RIGHT);
+    assert.equal(result['src/foo.ts'][0].code_range.start_line, 1);
+    assert.equal(result['src/foo.ts'][0].code_range.end_line, 5);
+  });
+
+  test('parses MISSED block to CoverageType.NOT_COVERED', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/bar.ts',
+        modifiedLinesBlocks: [
+          {startLine: 10, endLine: 20, type: 'MISSED'},
+        ],
+      }],
+    };
+    const result = (client as any).parseRanges(resp);
+    assert.equal(result['src/bar.ts'][0].type, CoverageType.NOT_COVERED);
+  });
+
+  test('skips block with missing startLine', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/foo.ts',
+        modifiedLinesBlocks: [
+          {startLine: null as any, endLine: 5, type: 'COVERED'},
+        ],
+      }],
+    };
+    const result = (client as any).parseRanges(resp);
+    assert.deepEqual(result, {});
+  });
+
+  test('skips block with missing type', () => {
+    const resp = {
+      files: [{
+        fullyQualifiedFileName: 'src/foo.ts',
+        modifiedLinesBlocks: [
+          {startLine: 1, endLine: 5, type: ''},
+        ],
+      }],
+    };
+    const result = (client as any).parseRanges(resp);
+    assert.deepEqual(result, {});
+  });
+});
