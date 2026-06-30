@@ -126,17 +126,25 @@ const LOW_COVERAGE_REASON_PREFIXES = [
   'EXPERIMENTAL_CODE', 'OTHER'
 ];
 
-function parsePct(pct?: string): number | undefined {
+export function parsePct(pct?: string): number | undefined {
   if (!pct) return undefined;
   const n = parseFloat(pct.replace('%', '').replace('+', ''));
   return isNaN(n) ? undefined : n;
 }
 
-function parseProject(pathName: string): string {
+export function parseProject(pathName: string): string {
   if (!pathName.startsWith('/c/')) throw new Error(`Invalid path: ${pathName}`);
   const idx = pathName.indexOf('/+');
   if (idx === -1) throw new Error(`Invalid path: ${pathName}`);
   return pathName.substring(3, idx);
+}
+
+export function getLowCoverageReason(commitMessage?: string): string | undefined {
+  if (!commitMessage) return undefined;
+  const re = /Low-Coverage-Reason:(.*)/g;
+  const matches = [...commitMessage.matchAll(re)];
+  if (matches.length === 0 || matches[0].length === 0) return undefined;
+  return matches[0][matches[0].length - 1].toString().trim() || undefined;
 }
 
 interface CoverageCacheEntry {
@@ -516,7 +524,7 @@ export class CoverageClient {
       const entry = this.cache.get(this.makeMemoryKey(jenkins.name, changeNum, patchNum));
       const projectResp = entry?.projectResponse;
       const percentages = entry?.percentages || {};
-      const reason = this.getLowCoverageReason(commitMessage);
+      const reason = getLowCoverageReason(commitMessage);
       const responseRuns: CheckRun[] = [];
       const coverageResults: CheckResult[] = [];
 
@@ -593,11 +601,4 @@ export class CoverageClient {
     } catch { return false; }
   }
 
-  private getLowCoverageReason(commitMessage?: string): string | undefined {
-    if (!commitMessage) return undefined;
-    const re = /Low-Coverage-Reason:(.*)/g;
-    const matches = [...commitMessage.matchAll(re)];
-    if (matches.length === 0 || matches[0].length === 0) return undefined;
-    return matches[0][matches[0].length - 1].toString().trim() || undefined;
-  }
 }
