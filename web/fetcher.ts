@@ -116,9 +116,20 @@ export class ChecksFetcher implements ChecksProvider {
 
   configs: Config[] | null;
 
+  /** Endpoints that returned 403/error — skip on future polls to avoid request storms. */
+  private unavailableEndpoints: Set<string> = new Set();
+
   constructor(pluginApi: PluginApi) {
     this.plugin = pluginApi;
     this.configs = null;
+  }
+
+  private isUnavailable(jenkinsName: string, endpoint: string): boolean {
+    return this.unavailableEndpoints.has(`${jenkinsName}:${endpoint}`);
+  }
+
+  private markUnavailable(jenkinsName: string, endpoint: string): void {
+    this.unavailableEndpoints.add(`${jenkinsName}:${endpoint}`);
   }
 
   private async toJson(response: Response) {
