@@ -261,19 +261,21 @@ export class CoverageClient {
     projectResponse: ProjectCoverageResponse | null;
     modifiedLines: ModifiedLinesResponse | null;
   }> {
-    // 1. Project-level stats + per-file percentages
-    const projResp = await (async () => {
-      try { return await this.fetchFromJenkins(jenkins, repo, `${statusLink}coverage/api/json`); } catch { return null; }
-    })();
+    const fetchOne = async (path: string) => {
+      try { return await this.fetchFromJenkins(jenkins, repo, `${statusLink}${path}`); } catch { return null; }
+    };
+
+    // Fetch both endpoints in parallel — they are independent.
+    const [projResp, modResp] = await Promise.all([
+      fetchOne('coverage/api/json'),
+      fetchOne('coverage/modified/api/json'),
+    ]);
+
     let projectResponse: ProjectCoverageResponse | null = null;
     if (projResp && (projResp.status == null || projResp.status !== 403)) {
       projectResponse = await this.toJson(projResp);
     }
 
-    // 2. Modified lines (per-file blocks)
-    const modResp = await (async () => {
-      try { return await this.fetchFromJenkins(jenkins, repo, `${statusLink}coverage/modified/api/json`); } catch { return null; }
-    })();
     let modifiedLines: ModifiedLinesResponse | null = null;
     if (modResp && (modResp.status == null || modResp.status !== 403)) {
       modifiedLines = await this.toJson(modResp);
