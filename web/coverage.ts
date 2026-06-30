@@ -172,6 +172,9 @@ export class CoverageClient {
   /** In-flight config fetch to dedupe concurrent calls. */
   private configsPromise: Promise<Config[]> | null = null;
 
+  /** True when the coverage endpoints returned 403 — skip future fetches. */
+  private coverageUnavailable: boolean = false;
+
   /**
    * In-memory LRU cache for coverage entries.
    * Key: JSON.stringify([jenkinsName, changeNum, patchNum])
@@ -269,6 +272,10 @@ export class CoverageClient {
     projectResponse: ProjectCoverageResponse | null;
     modifiedLines: ModifiedLinesResponse | null;
   }> {
+    if (this.coverageUnavailable) {
+      return {projectResponse: null, modifiedLines: null};
+    }
+
     const fetchOne = async (path: string) => {
       try { return await this.fetchFromJenkins(jenkins, repo, `${statusLink}${path}`); } catch { return null; }
     };
@@ -279,13 +286,22 @@ export class CoverageClient {
       fetchOne('coverage/modified/api/json'),
     ]);
 
+    // If both endpoints returned 403, the coverage plugin is not installed —
+    // remember it to avoid re-fetching on future polls.
+    const projDenied = !!(projResp && projResp.status != null && projResp.status === 403);
+    const modDenied = !!(modResp && modResp.status != null && modResp.status === 403);
+    if (projDenied && modDenied) {
+      this.coverageUnavailable = true;
+      return {projectResponse: null, modifiedLines: null};
+    }
+
     let projectResponse: ProjectCoverageResponse | null = null;
-    if (projResp && (projResp.status == null || projResp.status !== 403)) {
+    if (projResp && !projDenied) {
       projectResponse = await this.toJson(projResp);
     }
 
     let modifiedLines: ModifiedLinesResponse | null = null;
-    if (modResp && (modResp.status == null || modResp.status !== 403)) {
+    if (modResp && !modDenied) {
       modifiedLines = await this.toJson(modResp);
     }
 
