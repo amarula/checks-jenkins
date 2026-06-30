@@ -63,9 +63,13 @@ window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
 
   // 2. Prefetch coverage data when a change is shown,
   //    and re-evaluate column visibility for the new project.
+  //    Run both in parallel — they share ensureConfig dedup so the
+  //    second call hits the in-flight promise and resolves immediately.
   plugin.on(EventType.SHOW_CHANGE, async (change: ChangeInfo, revision: RevisionInfo) => {
-    coverageClient.prefetchCoverageRanges(change, revision);
-    const show = await coverageClient.showPercentageColumns();
+    const [show] = await Promise.all([
+      coverageClient.showPercentageColumns(),
+      coverageClient.prefetchCoverageRanges(change, revision),
+    ]);
     for (const instance of BaseComponent.instances) {
       instance.shown = show;
     }
