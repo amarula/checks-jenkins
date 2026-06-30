@@ -180,57 +180,39 @@ export class ChecksFetcher implements ChecksProvider {
       }
       const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
 
-      for (const run of data.runs) {
-        if (run.status === RunStatus.COMPLETED) {
-          if (!run.results) {
-            run.results = [];
-          }
-          const errorResult = run.results.find((result: CheckResult) => result.category === Category.ERROR);
-          if (errorResult) {
-            const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
-            if (errorMessage) {
-              const lines = errorMessage.split('\n');
-              const parsedSummary = lines[0].trim();
-              const detailedMessage = lines.slice(1).join('\n').trim();
-              const markdownMessage = detailedMessage
-                ? `\`\`\`text\n${detailedMessage}\n\`\`\``
-                : 'No additional details provided.';
-
-              if (!run.results) {
-                run.results = [];
-              }
-
-              errorResult.summary = parsedSummary;
-              errorResult.message = markdownMessage;
-              run.statusDescription = parsedSummary;
-            }
-          }
+      // Phase A: Enrich error results with explanations (parallel across runs).
+      const completedRuns = data.runs.filter((run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED);
+      await Promise.all(completedRuns.map(async (run: JenkinsCheckRun) => {
+        if (!run.results) run.results = [];
+        const errorResult = run.results.find((result: CheckResult) => result.category === Category.ERROR);
+        if (!errorResult) return;
+        const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
+        if (errorMessage) {
+          const lines = errorMessage.split('\n');
+          const parsedSummary = lines[0].trim();
+          const detailedMessage = lines.slice(1).join('\n').trim();
+          const markdownMessage = detailedMessage
+            ? `\`\`\`text\n${detailedMessage}\n\`\`\``
+            : 'No additional details provided.';
+          errorResult.summary = parsedSummary;
+          errorResult.message = markdownMessage;
+          run.statusDescription = parsedSummary;
         }
-      }
+      }));
 
+      // Phase B: Fetch warnings + test results (parallel across runs and both types).
       const cachedData: CheckRun[] = await cacheService.get(key);
       if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
-        let warningsData: CheckRun[] = [];
-        let hasData: boolean = false;
-        for (const run of data.runs) {
-          if (run.status === RunStatus.COMPLETED) {
-            const runWarningResults = await this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt);
-            if (runWarningResults.length) {
-              warningsData.push(...runWarningResults);
-              hasData = true;
-            }
-            const runTestResults = await this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt);
-            if (runTestResults.length) {
-              warningsData.push(...runTestResults);
-              hasData = true;
-            }
-          }
-        }
-        if (hasData === true) {
+        const enrichmentPromises = completedRuns.flatMap((run: JenkinsCheckRun) => [
+          this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt),
+          this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt),
+        ]);
+        const results = await Promise.all(enrichmentPromises);
+        const warningsData = results.flat().filter(Boolean);
+        if (warningsData.length > 0) {
           await cacheService.put(key, warningsData.slice());
           checkRuns.push(...warningsData.slice());
         }
-        warningsData = [];
       } else {
         checkRuns.push(...cachedData);
       }
