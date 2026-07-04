@@ -119,6 +119,15 @@ export class ChecksFetcher implements ChecksProvider {
   /** Endpoints that returned 403/error — skip on future polls to avoid request storms. */
   private unavailableEndpoints: Set<string> = new Set();
 
+  /** RunKeys that the user has clicked rerun on, or that are currently RUNNING/RUNNABLE.
+   *  Maps key to the timestamp (Date.now()) when it was added. While non-empty,
+   *  all rerun actions are disabled to prevent double-triggering. */
+  private triggeredReruns: Map<string, number> = new Map();
+
+  /** Maximum time (ms) a recently-clicked rerun remains disabled while waiting
+   *  for Jenkins to update its status to RUNNING. */
+  private static readonly RERUN_DISABLE_TTL_MS = 60_000;
+
   private static readonly TREE_EMOJI = '\u{1F333}';   // 🌳 — has downstream children
   private static readonly LEAF_EMOJI = '\u{1F343}';   // 🍃 — terminal job
 
@@ -244,6 +253,24 @@ export class ChecksFetcher implements ChecksProvider {
         }
       } else {
         checkRuns.push(...cachedData);
+      }
+
+      // Sync triggeredReruns from current run statuses:
+      //  - RUNNING/RUNNABLE runs add/refresh their keys with a fresh timestamp.
+      //  - Keys added by user clicks survive the shouldReload re-fetch gap
+      //    (Jenkins may not have queued the job yet) via a TTL.
+      //  - Keys whose TTL has expired with no active run are removed.
+      const now = Date.now();
+      for (const run of data.runs) {
+        if (run.status === RunStatus.RUNNING || run.status === RunStatus.RUNNABLE) {
+          const {runKey} = this.parseExternalId(run.externalId);
+          if (runKey) this.triggeredReruns.set(runKey, now);
+        }
+      }
+      for (const [key, ts] of this.triggeredReruns) {
+        if (now - ts > ChecksFetcher.RERUN_DISABLE_TTL_MS) {
+          this.triggeredReruns.delete(key);
+        }
       }
 
       for (const run of data.runs) {
@@ -500,14 +527,23 @@ export class ChecksFetcher implements ChecksProvider {
       statusLink: run.statusLink,
     };
     const actions: Action[] = [];
+    const {runKey} = this.parseExternalId(run.externalId);
+    const rerunDisabled = runKey
+      ? this.triggeredReruns.has(runKey) || this.triggeredReruns.size > 0
+      : this.triggeredReruns.size > 0;
+    const rerunTooltip = runKey && this.triggeredReruns.has(runKey)
+      ? 'Run already triggered'
+      : this.triggeredReruns.size > 0
+        ? 'A pipeline job is currently running'
+        : undefined;
     for (const action of run.actions) {
       actions.push({
         name: action.name,
-        tooltip: action.tooltip,
+        tooltip: rerunTooltip ?? action.tooltip,
         primary: action.primary,
         summary: action.summary,
-        disabled: action.disabled,
-        callback: () => this.rerun(jenkins, repo, action.url + "/index"),
+        disabled: action.disabled || rerunDisabled,
+        callback: () => this.rerun(jenkins, repo, action.url + "/index", runKey),
       });
     }
     convertedRun.actions = actions;
@@ -638,7 +674,8 @@ export class ChecksFetcher implements ChecksProvider {
     );
   }
 
-  private rerun(jenkins: Config, repo: string, url: string): Promise<ActionResult> {
+  private rerun(jenkins: Config, repo: string, url: string, runKey: string): Promise<ActionResult> {
+    if (runKey) this.triggeredReruns.set(runKey, Date.now());
     return this.fetchFromJenkins(jenkins, repo, url, "POST")
       .then(_ => {
         return {

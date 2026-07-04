@@ -279,6 +279,127 @@ suite('ChecksFetcher.convert', () => {
     assert.equal(result.startedTimestamp.getTime(), new Date(ts).getTime());
     assert.equal(result.scheduledTimestamp.getTime(), new Date(ts).getTime());
   });
+
+  test('disables rerun when runKey is in triggeredReruns', () => {
+    (fetcher as any).triggeredReruns.set('test-job#1', Date.now());
+    const jenkinsRun: JenkinsCheckRun = {
+      attempt: 1, change: 123, checkDescription: '', checkLink: '',
+      checkName: 'Test', externalId: 'test-job#1',
+      finishedTimestamp: '2024-06-15T10:00:00Z',
+      labelName: '', patchset: 1, results: [],
+      scheduledTimestamp: '2024-06-15T10:00:00Z',
+      startedTimestamp: '2024-06-15T10:00:00Z',
+      status: RunStatus.RUNNING, statusDescription: '', statusLink: '',
+      actions: [{
+        name: 'Rerun', tooltip: 'Trigger rerun',
+        primary: true, summary: false, disabled: false,
+        method: 'POST', data: '', url: 'http://jenkins/job/build',
+      }],
+    };
+    const config: Config = {name: 'my-jenkins', url: 'http://jenkins', user: ''};
+
+    const result = (fetcher as any).convert(config, 'my-repo', jenkinsRun);
+
+    assert.isTrue(result.actions[0].disabled);
+    assert.equal(result.actions[0].tooltip, 'Run already triggered');
+  });
+
+  test('disables rerun on all runs when any run is active', () => {
+    (fetcher as any).triggeredReruns.set('other-job#2', Date.now());
+    const jenkinsRun: JenkinsCheckRun = {
+      attempt: 1, change: 123, checkDescription: '', checkLink: '',
+      checkName: 'Test', externalId: 'test-job#1',
+      finishedTimestamp: '2024-06-15T10:00:00Z',
+      labelName: '', patchset: 1, results: [],
+      scheduledTimestamp: '2024-06-15T10:00:00Z',
+      startedTimestamp: '2024-06-15T10:00:00Z',
+      status: RunStatus.COMPLETED, statusDescription: '', statusLink: '',
+      actions: [{
+        name: 'Rerun', tooltip: 'Trigger rerun',
+        primary: true, summary: false, disabled: false,
+        method: 'POST', data: '', url: 'http://jenkins/job/build',
+      }],
+    };
+    const config: Config = {name: 'my-jenkins', url: 'http://jenkins', user: ''};
+
+    const result = (fetcher as any).convert(config, 'my-repo', jenkinsRun);
+
+    assert.isTrue(result.actions[0].disabled);
+    assert.equal(result.actions[0].tooltip, 'A pipeline job is currently running');
+  });
+
+  test('does not disable rerun when triggeredReruns is empty', () => {
+    const jenkinsRun: JenkinsCheckRun = {
+      attempt: 1, change: 123, checkDescription: '', checkLink: '',
+      checkName: 'Test', externalId: 'test-job#1',
+      finishedTimestamp: '2024-06-15T10:00:00Z',
+      labelName: '', patchset: 1, results: [],
+      scheduledTimestamp: '2024-06-15T10:00:00Z',
+      startedTimestamp: '2024-06-15T10:00:00Z',
+      status: RunStatus.COMPLETED, statusDescription: '', statusLink: '',
+      actions: [{
+        name: 'Rerun', tooltip: 'Trigger rerun',
+        primary: true, summary: false, disabled: false,
+        method: 'POST', data: '', url: 'http://jenkins/job/build',
+      }],
+    };
+    const config: Config = {name: 'my-jenkins', url: 'http://jenkins', user: ''};
+
+    const result = (fetcher as any).convert(config, 'my-repo', jenkinsRun);
+
+    assert.isFalse(result.actions[0].disabled);
+    assert.equal(result.actions[0].tooltip, 'Trigger rerun');
+  });
+
+  test('preserves Jenkins-side disabled flag', () => {
+    const jenkinsRun: JenkinsCheckRun = {
+      attempt: 1, change: 123, checkDescription: '', checkLink: '',
+      checkName: 'Test', externalId: 'test-job#1',
+      finishedTimestamp: '2024-06-15T10:00:00Z',
+      labelName: '', patchset: 1, results: [],
+      scheduledTimestamp: '2024-06-15T10:00:00Z',
+      startedTimestamp: '2024-06-15T10:00:00Z',
+      status: RunStatus.COMPLETED, statusDescription: '', statusLink: '',
+      actions: [{
+        name: 'Rerun', tooltip: 'Trigger rerun',
+        primary: true, summary: false, disabled: true,
+        method: 'POST', data: '', url: 'http://jenkins/job/build',
+      }],
+    };
+    const config: Config = {name: 'my-jenkins', url: 'http://jenkins', user: ''};
+
+    const result = (fetcher as any).convert(config, 'my-repo', jenkinsRun);
+
+    assert.isTrue(result.actions[0].disabled);
+  });
+
+  test('stale triggeredReruns entry still disables button (TTL cleanup in fetch)', () => {
+    // A key older than TTL will still disable convert — the TTL cleanup
+    // only runs in fetch().  Convert sees any key in the map regardless
+    // of age, which is the safe default (better to keep disabled than
+    // accidentally re-enable).
+    const stale = Date.now() - 120_000;
+    (fetcher as any).triggeredReruns.set('stale-job#1', stale);
+    const jenkinsRun: JenkinsCheckRun = {
+      attempt: 1, change: 123, checkDescription: '', checkLink: '',
+      checkName: 'Test', externalId: 'stale-job#1',
+      finishedTimestamp: '2024-06-15T10:00:00Z',
+      labelName: '', patchset: 1, results: [],
+      scheduledTimestamp: '2024-06-15T10:00:00Z',
+      startedTimestamp: '2024-06-15T10:00:00Z',
+      status: RunStatus.COMPLETED, statusDescription: '', statusLink: '',
+      actions: [{
+        name: 'Rerun', tooltip: 'Trigger rerun',
+        primary: true, summary: false, disabled: false,
+        method: 'POST', data: '', url: 'http://jenkins/job/build',
+      }],
+    };
+    const config: Config = {name: 'my-jenkins', url: 'http://jenkins', user: ''};
+
+    const result = (fetcher as any).convert(config, 'my-repo', jenkinsRun);
+
+    assert.isTrue(result.actions[0].disabled);
+  });
 });
 
 suite('ChecksFetcher tree naming', () => {
