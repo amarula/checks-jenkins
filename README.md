@@ -7,10 +7,15 @@
 `checks-jenkins` is a Gerrit plugin that implements the [Gerrit Checks API](https://gerrit-review.googlesource.com/Documentation/pg-plugin-checks-api.html) specifically for **Jenkins CI**.
 It surfaces Jenkins build statuses, logs, test results, and code coverage metrics directly within the Gerrit change screen, providing a seamless CI/CD feedback loop for developers.
 
+![Checks UI screenshot showing Jenkins build runs in the Gerrit Checks tab](docs/images/checks-ui.png)
+
 ## 🚀 Features
 
 - **Real-time Status**: Monitor Jenkins build progress (Pending, Running, Success, Failure) within the Gerrit UI.
-- **Detailed Feedback**: Provides links to build artifacts, warnings-ng reports, JUnit test failures, and build-failure explanations.
+- **Detailed Feedback**: Provides links to build artifacts, warnings-ng reports, JUnit test failures, and build-failure explanations. When a build fails, the plugin queries the Jenkins [Error Explanation](https://plugins.jenkins.io/error-explanation/) plugin to surface human-readable failure reasons directly in the check result.
+
+  ![Error explanation from Jenkins surfaced in a Gerrit check result](docs/images/explain-error-checks-ui.png)
+
 - **Code Coverage**: Per-file coverage annotations on diffs, file-list columns, and a low-coverage alert check (requires Jenkins [Code Coverage API](https://plugins.jenkins.io/code-coverage-api/) plugin).
 - **Rerun Triggers**: Directly trigger a Jenkins job rerun from the Gerrit interface.
 - **Streamlined Workflow**: Reduces the need to leave Gerrit to check CI status on the Jenkins dashboard.
