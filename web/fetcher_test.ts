@@ -304,10 +304,10 @@ suite('ChecksFetcher tree naming', () => {
     fetcher = makeFetcher();
   });
 
-  test('single direct run with no children gets leaf emoji', () => {
+  test('single direct run with no children keeps original name', () => {
     const runs = [makeRun({checkName: 'Build', externalId: 'build#1'})];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, `01 ${LEAF} Build`);
+    assert.equal(runs[0].checkName, 'Build');
   });
 
   test('single direct run with children gets tree emoji', () => {
@@ -359,19 +359,19 @@ suite('ChecksFetcher tree naming', () => {
     assert.equal(runs[0].checkName, 'NoId');
   });
 
-  test('malformed JSON externalId treated as plain key', () => {
+  test('malformed JSON externalId keeps original name when no dependencies', () => {
     const runs = [makeRun({checkName: 'Weird', externalId: 'not-really-json}'})];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, `01 ${LEAF} Weird`);
+    assert.equal(runs[0].checkName, 'Weird');
   });
 
-  test('broken parent chain stops traversal at known depth', () => {
+  test('broken parent chain keeps original name when no real dependencies', () => {
     const runs = [
       makeRun({checkName: 'Child', externalId: '{"parent":"ghost#1","run":"child#2"}'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    // parent "ghost#1" not in the list → depth stops at 0, so child is 01
-    assert.equal(runs[0].checkName, `01 ${LEAF} Child`);
+    // parent "ghost#1" not in the list → no real dependency, keep original name
+    assert.equal(runs[0].checkName, 'Child');
   });
 
   test('empty runs array is a no-op', () => {
@@ -379,14 +379,14 @@ suite('ChecksFetcher tree naming', () => {
     // No throw = pass
   });
 
-  test('mixed direct and downstream runs without shared keys', () => {
+  test('independent runs without shared keys keep original names', () => {
     const runs = [
       makeRun({checkName: 'Standalone', externalId: 'standalone#1'}),
       makeRun({checkName: 'Other', externalId: 'other#1'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, `01 ${LEAF} Standalone`);
-    assert.equal(runs[1].checkName, `01 ${LEAF} Other`);
+    assert.equal(runs[0].checkName, 'Standalone');
+    assert.equal(runs[1].checkName, 'Other');
   });
 
   test('runs without externalId keep original names while others get prefixed', () => {

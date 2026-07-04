@@ -539,6 +539,9 @@ export class ChecksFetcher implements ChecksProvider {
    * Depth is the number of parent links traversed to reach a root (direct run).
    * 🌳 is used when another run references this run's key as its parent,
    * 🍃 otherwise.
+   *
+   * When there are no parent-child relationships (single run or all independent),
+   * all names are left unchanged — numbering and emojis add no value.
    */
   private computeTreeNames(runs: JenkinsCheckRun[]): void {
     if (!runs || runs.length === 0) return;
@@ -564,7 +567,11 @@ export class ChecksFetcher implements ChecksProvider {
       }
     }
 
-    // 4. Compute depth by walking the parent chain.
+    // 4. If no parent-child relationships exist, skip naming entirely.
+    //    A single run or a set of independent runs don't need numbering or emojis.
+    if (hasChildren.size === 0) return;
+
+    // 5. Compute depth by walking the parent chain.
     //    Use a second cache to avoid recomputing shared ancestors.
     const depthCache = new Map<string, number>();
     const computeDepth = (runKey: string): number => {
@@ -579,7 +586,7 @@ export class ChecksFetcher implements ChecksProvider {
       return d;
     };
 
-    // 5. Apply the new checkName on each run.
+    // 6. Apply the new checkName on each run.
     //    Runs without a valid externalId keep their original name.
     for (let i = 0; i < runs.length; i++) {
       const {runKey} = parsed[i];
