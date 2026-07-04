@@ -119,6 +119,9 @@ export class ChecksFetcher implements ChecksProvider {
   /** Endpoints that returned 403/error — skip on future polls to avoid request storms. */
   private unavailableEndpoints: Set<string> = new Set();
 
+  private static readonly TREE_EMOJI = '\u{1F333}';   // 🌳 — has downstream children
+  private static readonly LEAF_EMOJI = '\u{1F343}';   // 🍃 — terminal job
+
   constructor(pluginApi: PluginApi) {
     this.plugin = pluginApi;
     this.configs = null;
@@ -583,7 +586,7 @@ export class ChecksFetcher implements ChecksProvider {
       if (!runKey) continue;
       const depth = computeDepth(runKey);
       const level = String(depth + 1).padStart(2, '0');
-      const emoji = hasChildren.has(runKey) ? '\u{1F333}' : '\u{1F343}';
+      const emoji = hasChildren.has(runKey) ? ChecksFetcher.TREE_EMOJI : ChecksFetcher.LEAF_EMOJI;
       runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
     }
   }

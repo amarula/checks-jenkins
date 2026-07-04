@@ -283,6 +283,8 @@ suite('ChecksFetcher.convert', () => {
 
 suite('ChecksFetcher tree naming', () => {
   let fetcher: ChecksFetcher;
+  const TREE = '\u{1F333}';  // 🌳
+  const LEAF = '\u{1F343}';  // 🍃
 
   function makeRun(overrides: Partial<JenkinsCheckRun> = {}): JenkinsCheckRun {
     return {
@@ -305,7 +307,7 @@ suite('ChecksFetcher tree naming', () => {
   test('single direct run with no children gets leaf emoji', () => {
     const runs = [makeRun({checkName: 'Build', externalId: 'build#1'})];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F343} Build');
+    assert.equal(runs[0].checkName, `01 ${LEAF} Build`);
   });
 
   test('single direct run with children gets tree emoji', () => {
@@ -314,8 +316,8 @@ suite('ChecksFetcher tree naming', () => {
       makeRun({checkName: 'Test', externalId: '{"parent":"build#1","run":"test#2"}'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F333} Build');
-    assert.equal(runs[1].checkName, '02 \u{1F343} Test');
+    assert.equal(runs[0].checkName, `01 ${TREE} Build`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Test`);
   });
 
   test('depth chain A→B→C gets correct numbering', () => {
@@ -325,9 +327,9 @@ suite('ChecksFetcher tree naming', () => {
       makeRun({checkName: 'C', externalId: '{"parent":"b#2","run":"c#3"}'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F333} A');
-    assert.equal(runs[1].checkName, '02 \u{1F333} B');
-    assert.equal(runs[2].checkName, '03 \u{1F343} C');
+    assert.equal(runs[0].checkName, `01 ${TREE} A`);
+    assert.equal(runs[1].checkName, `02 ${TREE} B`);
+    assert.equal(runs[2].checkName, `03 ${LEAF} C`);
   });
 
   test('parallel children at same depth get the same number', () => {
@@ -338,10 +340,10 @@ suite('ChecksFetcher tree naming', () => {
       makeRun({checkName: 'Child3', externalId: '{"parent":"parent#1","run":"child3#4"}'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F333} Parent');
-    assert.equal(runs[1].checkName, '02 \u{1F343} Child1');
-    assert.equal(runs[2].checkName, '02 \u{1F343} Child2');
-    assert.equal(runs[3].checkName, '02 \u{1F343} Child3');
+    assert.equal(runs[0].checkName, `01 ${TREE} Parent`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Child1`);
+    assert.equal(runs[2].checkName, `02 ${LEAF} Child2`);
+    assert.equal(runs[3].checkName, `02 ${LEAF} Child3`);
   });
 
   test('empty externalId keeps original name unchanged', () => {
@@ -360,7 +362,7 @@ suite('ChecksFetcher tree naming', () => {
   test('malformed JSON externalId treated as plain key', () => {
     const runs = [makeRun({checkName: 'Weird', externalId: 'not-really-json}'})];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F343} Weird');
+    assert.equal(runs[0].checkName, `01 ${LEAF} Weird`);
   });
 
   test('broken parent chain stops traversal at known depth', () => {
@@ -369,7 +371,7 @@ suite('ChecksFetcher tree naming', () => {
     ];
     (fetcher as any).computeTreeNames(runs);
     // parent "ghost#1" not in the list → depth stops at 0, so child is 01
-    assert.equal(runs[0].checkName, '01 \u{1F343} Child');
+    assert.equal(runs[0].checkName, `01 ${LEAF} Child`);
   });
 
   test('empty runs array is a no-op', () => {
@@ -383,8 +385,8 @@ suite('ChecksFetcher tree naming', () => {
       makeRun({checkName: 'Other', externalId: 'other#1'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F343} Standalone');
-    assert.equal(runs[1].checkName, '01 \u{1F343} Other');
+    assert.equal(runs[0].checkName, `01 ${LEAF} Standalone`);
+    assert.equal(runs[1].checkName, `01 ${LEAF} Other`);
   });
 
   test('runs without externalId keep original names while others get prefixed', () => {
@@ -395,7 +397,7 @@ suite('ChecksFetcher tree naming', () => {
     ];
     (fetcher as any).computeTreeNames(runs);
     assert.equal(runs[0].checkName, 'Keep Me');
-    assert.equal(runs[1].checkName, '01 \u{1F333} Parent');
-    assert.equal(runs[2].checkName, '02 \u{1F343} Child');
+    assert.equal(runs[1].checkName, `01 ${TREE} Parent`);
+    assert.equal(runs[2].checkName, `02 ${LEAF} Child`);
   });
 });
