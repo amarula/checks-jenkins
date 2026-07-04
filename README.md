@@ -124,6 +124,24 @@ Valid reasons:
 
 A malformed reason (not starting with one of the prefixes above) triggers a separate `Low-Coverage-Reason Format Check` warning.
 
+> 📖 See [Configuration](docs/configuration.md) for the full config reference, [Coverage System](docs/coverage-system.md) for coverage internals, and [Caching](docs/caching.md) for the cache strategy.
+
+## 📖 Documentation
+
+Detailed technical documentation is available in the [`docs/`](docs/) directory:
+
+| Document | Description |
+|---|---|
+| [Architecture](docs/architecture.md) | High-level plugin architecture, module graph, build pipeline, and key design decisions |
+| [Backend](docs/backend.md) | Java backend classes — REST endpoints, config resolution, and auth proxy |
+| [Frontend](docs/frontend.md) | TypeScript frontend — checks provider, enrichment pipeline, coverage client |
+| [Data Flow](docs/data-flow.md) | Sequence diagrams for config, checks polling, coverage, and rerun flows |
+| [Configuration](docs/configuration.md) | Full config reference — global, per-project, multi-instance, auth modes |
+| [Coverage System](docs/coverage-system.md) | Coverage endpoints, line annotations, low-coverage alert, `Low-Coverage-Reason` footer |
+| [Caching](docs/caching.md) | Two-tier cache strategy — in-memory LRU, IndexedDB, staleness detection |
+| [Components](docs/components.md) | Lit web component hierarchy — headers, content cells, summary rows |
+| [Contributing](docs/contributing.md) | Development setup, build commands, testing, linting, and deployment |
+
 ## 🤝 Contributing
 
 Contributions are welcome! This project is maintained by Amarula Solutions.
@@ -132,6 +150,8 @@ Contributions are welcome! This project is maintained by Amarula Solutions.
 - Create a feature branch (git checkout -b feature/improvement).
 - Commit your changes.
 - Push to the branch and open a Pull Request.
+
+> 📖 See [Contributing](docs/contributing.md) for development setup, build commands, and testing.
 
 ## 📄 License
 
