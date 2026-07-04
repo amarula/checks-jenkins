@@ -189,6 +189,11 @@ export class ChecksFetcher implements ChecksProvider {
       if (totalRuns == 0) {
         continue;
       }
+
+      // Apply flattened-tree naming before enrichment so checkName
+      // carries the depth and emoji prefix for all downstream consumers.
+      this.computeTreeNames(data.runs);
+
       const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
 
       // Phase A: Enrich error results with explanations (parallel across runs).
@@ -504,6 +509,81 @@ export class ChecksFetcher implements ChecksProvider {
     }
     convertedRun.actions = actions;
     return convertedRun;
+  }
+
+  /**
+   * Parses a Jenkins externalId into its {runKey, parentKey} components.
+   *
+   * Downstream runs carry a JSON object: {"parent":"upstreamJob#N","run":"thisJob#M"}.
+   * Direct runs are plain strings: "jobFullName#buildNumber".
+   */
+  private parseExternalId(externalId: string): {runKey: string; parentKey: string | null} {
+    if (!externalId) return {runKey: '', parentKey: null};
+    try {
+      const parsed = JSON.parse(externalId);
+      if (parsed.parent && parsed.run) {
+        return {runKey: parsed.run as string, parentKey: parsed.parent as string};
+      }
+    } catch {}
+    return {runKey: externalId, parentKey: null};
+  }
+
+  /**
+   * Rewrites checkName on every run in-place to a flattened-tree label:
+   *
+   *   {depth+1 padded} {🌳|🍃} {originalName}
+   *
+   * Depth is the number of parent links traversed to reach a root (direct run).
+   * 🌳 is used when another run references this run's key as its parent,
+   * 🍃 otherwise.
+   */
+  private computeTreeNames(runs: JenkinsCheckRun[]): void {
+    if (!runs || runs.length === 0) return;
+
+    // 1. Parse every externalId
+    const parsed = runs.map(r => this.parseExternalId(r.externalId));
+
+    // 2. Build lookup structures
+    const parentMap = new Map<string, string | null>();  // runKey → parentKey
+    const allKeys = new Set<string>();
+    for (const p of parsed) {
+      if (p.runKey) {
+        parentMap.set(p.runKey, p.parentKey);
+        allKeys.add(p.runKey);
+      }
+    }
+
+    // 3. Determine which runKeys have children
+    const hasChildren = new Set<string>();
+    for (const p of parsed) {
+      if (p.parentKey && allKeys.has(p.parentKey)) {
+        hasChildren.add(p.parentKey);
+      }
+    }
+
+    // 4. Compute depth by walking the parent chain.
+    //    Use a second cache to avoid recomputing shared ancestors.
+    const depthCache = new Map<string, number>();
+    const computeDepth = (runKey: string): number => {
+      if (depthCache.has(runKey)) return depthCache.get(runKey)!;
+      const parent = parentMap.get(runKey);
+      if (parent === null || parent === undefined || !allKeys.has(parent)) {
+        depthCache.set(runKey, 0);
+        return 0;
+      }
+      const d = computeDepth(parent) + 1;
+      depthCache.set(runKey, d);
+      return d;
+    };
+
+    // 5. Apply the new checkName on each run
+    for (let i = 0; i < runs.length; i++) {
+      const {runKey} = parsed[i];
+      const depth = runKey ? computeDepth(runKey) : 0;
+      const level = String(depth + 1).padStart(2, '0');
+      const emoji = runKey && hasChildren.has(runKey) ? '\u{1F333}' : '\u{1F343}';
+      runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
+    }
   }
 
   private fetchFromJenkins(jenkins: Config, repo: string, url: string, method: string): Promise<Response> {

@@ -280,3 +280,103 @@ suite('ChecksFetcher.convert', () => {
     assert.equal(result.scheduledTimestamp.getTime(), new Date(ts).getTime());
   });
 });
+
+suite('ChecksFetcher tree naming', () => {
+  let fetcher: ChecksFetcher;
+
+  function makeRun(overrides: Partial<JenkinsCheckRun> = {}): JenkinsCheckRun {
+    return {
+      attempt: 1, change: 1, checkDescription: '', checkLink: '',
+      checkName: 'Default', externalId: '',
+      finishedTimestamp: '2024-01-01T00:00:00Z',
+      labelName: '', patchset: 1, results: [],
+      scheduledTimestamp: '2024-01-01T00:00:00Z',
+      startedTimestamp: '2024-01-01T00:00:00Z',
+      status: RunStatus.COMPLETED, statusDescription: '', statusLink: '',
+      actions: [],
+      ...overrides,
+    };
+  }
+
+  setup(() => {
+    fetcher = makeFetcher();
+  });
+
+  test('single direct run with no children gets leaf emoji', () => {
+    const runs = [makeRun({checkName: 'Build', externalId: 'build#1'})];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F343} Build');
+  });
+
+  test('single direct run with children gets tree emoji', () => {
+    const runs = [
+      makeRun({checkName: 'Build', externalId: 'build#1'}),
+      makeRun({checkName: 'Test', externalId: '{"parent":"build#1","run":"test#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F333} Build');
+    assert.equal(runs[1].checkName, '02 \u{1F343} Test');
+  });
+
+  test('depth chain A→B→C gets correct numbering', () => {
+    const runs = [
+      makeRun({checkName: 'A', externalId: 'a#1'}),
+      makeRun({checkName: 'B', externalId: '{"parent":"a#1","run":"b#2"}'}),
+      makeRun({checkName: 'C', externalId: '{"parent":"b#2","run":"c#3"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F333} A');
+    assert.equal(runs[1].checkName, '02 \u{1F333} B');
+    assert.equal(runs[2].checkName, '03 \u{1F343} C');
+  });
+
+  test('parallel children at same depth get the same number', () => {
+    const runs = [
+      makeRun({checkName: 'Parent', externalId: 'parent#1'}),
+      makeRun({checkName: 'Child1', externalId: '{"parent":"parent#1","run":"child1#2"}'}),
+      makeRun({checkName: 'Child2', externalId: '{"parent":"parent#1","run":"child2#3"}'}),
+      makeRun({checkName: 'Child3', externalId: '{"parent":"parent#1","run":"child3#4"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F333} Parent');
+    assert.equal(runs[1].checkName, '02 \u{1F343} Child1');
+    assert.equal(runs[2].checkName, '02 \u{1F343} Child2');
+    assert.equal(runs[3].checkName, '02 \u{1F343} Child3');
+  });
+
+  test('empty externalId treated as isolated run', () => {
+    const runs = [makeRun({checkName: 'Orphan', externalId: ''})];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F343} Orphan');
+  });
+
+  test('malformed JSON externalId treated as plain key', () => {
+    const runs = [makeRun({checkName: 'Weird', externalId: 'not-really-json}'})];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F343} Weird');
+  });
+
+  test('broken parent chain stops traversal at known depth', () => {
+    const runs = [
+      makeRun({checkName: 'Child', externalId: '{"parent":"ghost#1","run":"child#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // parent "ghost#1" not in the list → depth stops at 0, so child is 01
+    assert.equal(runs[0].checkName, '01 \u{1F343} Child');
+  });
+
+  test('empty runs array is a no-op', () => {
+    (fetcher as any).computeTreeNames([]);
+    // No throw = pass
+  });
+
+  test('mixed direct and downstream runs without shared keys', () => {
+    const runs = [
+      makeRun({checkName: 'Standalone', externalId: 'standalone#1'}),
+      makeRun({checkName: 'Other', externalId: 'other#1'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, '01 \u{1F343} Standalone');
+    assert.equal(runs[1].checkName, '01 \u{1F343} Other');
+  });
+});
