@@ -22,7 +22,7 @@ It surfaces Jenkins build statuses, logs, test results, and code coverage metric
 
   ![Flattened-tree pipeline visualization showing upstream/downstream dependencies in the Checks tab](docs/images/checks-dependency.png)
 
-- **Rerun Triggers**: Directly trigger a Jenkins job rerun from the Gerrit interface.
+- **Rerun Triggers**: Directly trigger a Jenkins job rerun from the Gerrit interface. Rerun buttons are automatically disabled while any pipeline job is running — preventing accidental double-triggers.
 - **Streamlined Workflow**: Reduces the need to leave Gerrit to check CI status on the Jenkins dashboard.
 
 ## 🛠 Prerequisites
