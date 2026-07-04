@@ -18,6 +18,9 @@ It surfaces Jenkins build statuses, logs, test results, and code coverage metric
 
 - **Code Coverage**: Per-file coverage annotations on diffs, file-list columns, and a low-coverage alert check (requires Jenkins [Code Coverage API](https://plugins.jenkins.io/code-coverage-api/) plugin).
 - **Pipeline Visualization**: Upstream/downstream job relationships are displayed as a flattened tree. Parent jobs get a `🌳` prefix, leaf jobs get `🍃`, and every job at the same depth shares the same zero-padded number — making pipeline structure scannable at a glance without leaving the flat Gerrit Checks table. Requires the latest [Gerrit Checks API Plugin](https://plugins.jenkins.io/gerrit-checks-api/) on Jenkins.
+
+  ![Flattened-tree pipeline visualization showing upstream/downstream dependencies in the Checks tab](docs/images/checks-dependency.png)
+
 - **Rerun Triggers**: Directly trigger a Jenkins job rerun from the Gerrit interface.
 - **Streamlined Workflow**: Reduces the need to leave Gerrit to check CI status on the Jenkins dashboard.
 
