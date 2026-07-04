@@ -389,19 +389,20 @@ suite('ChecksFetcher tree naming', () => {
     assert.equal(runs[1].checkName, 'Other');
   });
 
-  test('runs without externalId keep original names while others get prefixed', () => {
+  test('runs without externalId keep original names while others get prefixed and sorted', () => {
     const runs = [
       makeRun({checkName: 'Keep Me', externalId: ''}),
       makeRun({checkName: 'Parent', externalId: 'parent#1'}),
       makeRun({checkName: 'Child', externalId: '{"parent":"parent#1","run":"child#2"}'}),
     ];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, 'Keep Me');
-    assert.equal(runs[1].checkName, `01 ${TREE} Parent`);
-    assert.equal(runs[2].checkName, `02 ${LEAF} Child`);
+    // In-graph runs sorted by depth first, non-graph runs last
+    assert.equal(runs[0].checkName, `01 ${TREE} Parent`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Child`);
+    assert.equal(runs[2].checkName, 'Keep Me');
   });
 
-  test('independent run in same batch as parent-child keeps original name', () => {
+  test('independent run in same batch as parent-child keeps original name at end', () => {
     const runs = [
       makeRun({checkName: 'Parent', externalId: 'parent#1'}),
       makeRun({checkName: 'Child', externalId: '{"parent":"parent#1","run":"child#2"}'}),
@@ -411,5 +412,29 @@ suite('ChecksFetcher tree naming', () => {
     assert.equal(runs[0].checkName, `01 ${TREE} Parent`);
     assert.equal(runs[1].checkName, `02 ${LEAF} Child`);
     assert.equal(runs[2].checkName, 'Standalone');
+  });
+
+  test('sorts runs by depth when Jenkins returns them out of order', () => {
+    const runs = [
+      makeRun({checkName: 'Child', externalId: '{"parent":"parent#1","run":"child#2"}'}),
+      makeRun({checkName: 'Parent', externalId: 'parent#1'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // Parent (depth 0) before Child (depth 1) regardless of input order
+    assert.equal(runs[0].checkName, `01 ${TREE} Parent`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Child`);
+  });
+
+  test('sort is stable within same depth', () => {
+    const runs = [
+      makeRun({checkName: 'Parent', externalId: 'parent#1'}),
+      makeRun({checkName: 'ChildB', externalId: '{"parent":"parent#1","run":"childB#3"}'}),
+      makeRun({checkName: 'ChildA', externalId: '{"parent":"parent#1","run":"childA#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // Parent first, then children in original order (B before A — stable)
+    assert.equal(runs[0].checkName, `01 ${TREE} Parent`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} ChildB`);
+    assert.equal(runs[2].checkName, `02 ${LEAF} ChildA`);
   });
 });

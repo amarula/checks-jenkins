@@ -598,14 +598,24 @@ export class ChecksFetcher implements ChecksProvider {
 
     // 6. Apply the new checkName only to runs that are part of the tree.
     //    Runs without a valid externalId or outside the graph keep their original name.
+    const depthByRun = new Map<JenkinsCheckRun, number>();
     for (let i = 0; i < runs.length; i++) {
       const {runKey} = parsed[i];
       if (!runKey || !inGraph.has(runKey)) continue;
       const depth = computeDepth(runKey);
+      depthByRun.set(runs[i], depth);
       const level = String(depth + 1).padStart(2, '0');
       const emoji = hasChildren.has(runKey) ? ChecksFetcher.TREE_EMOJI : ChecksFetcher.LEAF_EMOJI;
       runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
     }
+
+    // 7. Stable-sort runs by depth so the tree renders top-down in the UI.
+    //    In-graph runs order by depth ascending; non-graph runs go last.
+    runs.sort((a, b) => {
+      const depthA = depthByRun.get(a) ?? Infinity;
+      const depthB = depthByRun.get(b) ?? Infinity;
+      return depthA - depthB;
+    });
   }
 
   private fetchFromJenkins(jenkins: Config, repo: string, url: string, method: string): Promise<Response> {
