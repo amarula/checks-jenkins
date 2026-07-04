@@ -182,12 +182,7 @@ export class ChecksFetcher implements ChecksProvider {
           return null;
         }
       })();
-      if (response == null) {
-        // Network error or Jenkins server error (5xx) — skip this config silently.
-        // The next poll cycle will retry.
-        continue;
-      }
-      if (response.status != undefined && response.status === 403) {
+      if (response == null || (response.status != undefined && response.status === 403)) {
         // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
         return {
           responseCode: ResponseCode.NOT_LOGGED_IN,
