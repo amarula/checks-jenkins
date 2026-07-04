@@ -517,7 +517,7 @@ export class ChecksFetcher implements ChecksProvider {
    * Downstream runs carry a JSON object: {"parent":"upstreamJob#N","run":"thisJob#M"}.
    * Direct runs are plain strings: "jobFullName#buildNumber".
    */
-  private parseExternalId(externalId: string): {runKey: string; parentKey: string | null} {
+  private parseExternalId(externalId: string | undefined): {runKey: string; parentKey: string | null} {
     if (!externalId) return {runKey: '', parentKey: null};
     try {
       const parsed = JSON.parse(externalId);
@@ -576,12 +576,14 @@ export class ChecksFetcher implements ChecksProvider {
       return d;
     };
 
-    // 5. Apply the new checkName on each run
+    // 5. Apply the new checkName on each run.
+    //    Runs without a valid externalId keep their original name.
     for (let i = 0; i < runs.length; i++) {
       const {runKey} = parsed[i];
-      const depth = runKey ? computeDepth(runKey) : 0;
+      if (!runKey) continue;
+      const depth = computeDepth(runKey);
       const level = String(depth + 1).padStart(2, '0');
-      const emoji = runKey && hasChildren.has(runKey) ? '\u{1F333}' : '\u{1F343}';
+      const emoji = hasChildren.has(runKey) ? '\u{1F333}' : '\u{1F343}';
       runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
     }
   }

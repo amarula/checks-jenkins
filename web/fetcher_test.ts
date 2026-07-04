@@ -344,10 +344,17 @@ suite('ChecksFetcher tree naming', () => {
     assert.equal(runs[3].checkName, '02 \u{1F343} Child3');
   });
 
-  test('empty externalId treated as isolated run', () => {
+  test('empty externalId keeps original name unchanged', () => {
     const runs = [makeRun({checkName: 'Orphan', externalId: ''})];
     (fetcher as any).computeTreeNames(runs);
-    assert.equal(runs[0].checkName, '01 \u{1F343} Orphan');
+    assert.equal(runs[0].checkName, 'Orphan');
+  });
+
+  test('undefined externalId keeps original name unchanged', () => {
+    const runs = [makeRun({checkName: 'NoId'})];
+    delete (runs[0] as any).externalId;
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, 'NoId');
   });
 
   test('malformed JSON externalId treated as plain key', () => {
@@ -378,5 +385,17 @@ suite('ChecksFetcher tree naming', () => {
     (fetcher as any).computeTreeNames(runs);
     assert.equal(runs[0].checkName, '01 \u{1F343} Standalone');
     assert.equal(runs[1].checkName, '01 \u{1F343} Other');
+  });
+
+  test('runs without externalId keep original names while others get prefixed', () => {
+    const runs = [
+      makeRun({checkName: 'Keep Me', externalId: ''}),
+      makeRun({checkName: 'Parent', externalId: 'parent#1'}),
+      makeRun({checkName: 'Child', externalId: '{"parent":"parent#1","run":"child#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, 'Keep Me');
+    assert.equal(runs[1].checkName, '01 \u{1F333} Parent');
+    assert.equal(runs[2].checkName, '02 \u{1F343} Child');
   });
 });
