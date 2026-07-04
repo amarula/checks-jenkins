@@ -49,6 +49,16 @@ Browser (ChecksFetcher)           Gerrit Proxy              Jenkins
   │                                  │◄───────────────────────│
   │◄─────────────────────────────────│                        │
   │                                  │                        │
+  │  ── Phase 0b: Tree naming ──     │                        │
+  │  computeTreeNames(data.runs)     │                        │
+  │  Parse externalId → parent map   │                        │
+  │  Build inGraph set (runs with    │                        │
+  │    parent or child relationship) │                        │
+  │  Rewrite checkName in-place:     │                        │
+  │    "01 🌳 Build"                 │                        │
+  │    "02 🍃 Test"                   │                        │
+  │  (skipped if no dependencies)    │                        │
+  │                                  │                        │
   │  ── Phase A: Error explanation (parallel per run) ──      │
   │  For each COMPLETED run:         │                        │
   │    POST proxy-trigger            │                        │

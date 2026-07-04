@@ -29,15 +29,19 @@ fetch(changeData)
   │
   ├─ 2. fetchFromJenkins()      → GET {jenkins}/gerrit-checks/runs?change=X&patchset=Y
   │
-  ├─ 3. Phase A (parallel)      → Error explanation enrichment for COMPLETED runs
+  ├─ 3. computeTreeNames()      → Parse externalId for parent-child relationships,
+  │                                  rewrite checkName as "NN 🌳|🍃 originalName"
+  │                                  (skipped when no dependencies exist)
+  │
+  ├─ 4. Phase A (parallel)      → Error explanation enrichment for COMPLETED runs
   │     └─ explainBuildFailure()   GET {statusLink}error-explanation/api/json
   │
-  ├─ 4. Phase B (parallel)      → Warnings + test enrichment (cached in IndexedDB)
+  ├─ 5. Phase B (parallel)      → Warnings + test enrichment (cached in IndexedDB)
   │     ├─ buildWarnings()         GET {statusLink}warnings-ng/api/json
   │     │   └─ for each tool →     GET {statusLink}{toolId}/all/api/json?tree=...
   │     └─ buildTestResults()      GET {statusLink}testReport/api/json?tree=...
   │
-  └─ 5. convert()               → Map JenkinsCheckRun → CheckRun with action callbacks
+  └─ 6. convert()               → Map JenkinsCheckRun → CheckRun with action callbacks
 ```
 
 ### Enrichment details
@@ -47,6 +51,46 @@ fetch(changeData)
 | Error explanation | `{statusLink}error-explanation/api/json` | Parsed `explanation` string split into summary + markdown code block |
 | Warnings (warnings-ng) | `{statusLink}warnings-ng/api/json` → per-tool `{toolId}/all/api/json` | `CheckRun` per tool with per-issue `CheckResult` entries, tagged by severity |
 | JUnit test results | `{statusLink}testReport/api/json?tree=suites[cases[...]]` | Single `CheckRun` named "JUnit" with failed-test results |
+
+### Flattened-tree pipeline naming
+
+`computeTreeNames()` (`web/fetcher.ts:546`) rewrites `checkName` in-place to visualize upstream/downstream pipeline structure directly in Gerrit's flat Checks UI table.
+
+#### externalId format
+
+The Jenkins-side `gerrit-checks-api-plugin` encodes relationships in `externalId`:
+
+| Relationship | externalId format |
+|---|---|
+| Direct run (no parent) | `"jobFullName#buildNumber"` |
+| Downstream run | `{"parent":"upstreamJob#N","run":"thisJob#M"}` (JSON string) |
+
+#### Naming convention
+
+```
+{zeroPaddedDepth} {🌳|🍃} {originalName}
+```
+
+| Component | Rule |
+|---|---|
+| **Number** | Depth in the dependency tree + 1, zero-padded to 2 digits. Direct runs (no parent) = `01`, their children = `02`, grandchildren = `03`. Parallel jobs at the same depth share the same number. |
+| **Emoji** | `🌳` if the job has downstream children (someone references it as parent), `🍃` if it has none. |
+| **Original name** | The unmodified `checkName` from Jenkins. |
+
+#### Scope
+
+Only runs that participate in a parent→child relationship (as either parent or child) get the prefix. Independent runs in the same batch, and all enrichment runs (warnings-ng tools, JUnit, Code Coverage), keep their original names unchanged.
+
+#### Example output
+
+```
+01 🌳 Base Initialization
+02 🌳 Parallel Builds
+03 🍃 Backend Unit Tests
+03 🍃 Frontend Unit Tests
+03 🍃 Database Migrations
+04 🍃 Final Release
+```
 
 ### Category and tag-color mapping (warnings-ng)
 
