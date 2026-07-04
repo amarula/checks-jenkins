@@ -567,9 +567,19 @@ export class ChecksFetcher implements ChecksProvider {
       }
     }
 
-    // 4. If no parent-child relationships exist, skip naming entirely.
-    //    A single run or a set of independent runs don't need numbering or emojis.
-    if (hasChildren.size === 0) return;
+    // 4. Compute the set of runKeys that participate in the dependency graph.
+    //    A run is "in the graph" if it either has children or has a parent that
+    //    exists in this batch.  Runs with no relationships at all keep their
+    //    original names — they don't need numbering or emojis.
+    const inGraph = new Set<string>(hasChildren);
+    for (const p of parsed) {
+      if (p.parentKey && allKeys.has(p.parentKey)) {
+        inGraph.add(p.runKey);
+      }
+    }
+
+    // If no run participates in any parent→child relationship, skip naming entirely.
+    if (inGraph.size === 0) return;
 
     // 5. Compute depth by walking the parent chain.
     //    Use a second cache to avoid recomputing shared ancestors.
@@ -586,11 +596,11 @@ export class ChecksFetcher implements ChecksProvider {
       return d;
     };
 
-    // 6. Apply the new checkName on each run.
-    //    Runs without a valid externalId keep their original name.
+    // 6. Apply the new checkName only to runs that are part of the tree.
+    //    Runs without a valid externalId or outside the graph keep their original name.
     for (let i = 0; i < runs.length; i++) {
       const {runKey} = parsed[i];
-      if (!runKey) continue;
+      if (!runKey || !inGraph.has(runKey)) continue;
       const depth = computeDepth(runKey);
       const level = String(depth + 1).padStart(2, '0');
       const emoji = hasChildren.has(runKey) ? ChecksFetcher.TREE_EMOJI : ChecksFetcher.LEAF_EMOJI;

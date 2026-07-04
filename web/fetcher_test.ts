@@ -400,4 +400,16 @@ suite('ChecksFetcher tree naming', () => {
     assert.equal(runs[1].checkName, `01 ${TREE} Parent`);
     assert.equal(runs[2].checkName, `02 ${LEAF} Child`);
   });
+
+  test('independent run in same batch as parent-child keeps original name', () => {
+    const runs = [
+      makeRun({checkName: 'Parent', externalId: 'parent#1'}),
+      makeRun({checkName: 'Child', externalId: '{"parent":"parent#1","run":"child#2"}'}),
+      makeRun({checkName: 'Standalone', externalId: 'standalone#1'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.equal(runs[0].checkName, `01 ${TREE} Parent`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Child`);
+    assert.equal(runs[2].checkName, 'Standalone');
+  });
 });
