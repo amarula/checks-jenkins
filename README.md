@@ -16,7 +16,8 @@ It surfaces Jenkins build statuses, logs, test results, and code coverage metric
 
   ![Error explanation from Jenkins surfaced in a Gerrit check result](docs/images/explain-error-checks-ui.png)
 
-- **Code Coverage**: Per-file coverage annotations on diffs, file-list columns, and a low-coverage alert check (requires Jenkins [Code Coverage API](https://plugins.jenkins.io/code-coverage-api/) plugin).
+- **Code Coverage**: Per-file coverage annotations on diffs, file-list columns, and a low-coverage alert check (requires Jenkins [Code Coverage](https://plugins.jenkins.io/coverage/) plugin).
+- **Warning NG**: Per visualize the warning raised by the pipeline that are including in you recording steps.
 - **Pipeline Visualization**: Upstream/downstream job relationships are displayed as a flattened tree. Parent jobs get a `🌳` prefix, leaf jobs get `🍃`, and every job at the same depth shares the same zero-padded number — making pipeline structure scannable at a glance without leaving the flat Gerrit Checks table. Requires the latest [Gerrit Checks API Plugin](https://plugins.jenkins.io/gerrit-checks-api/) on Jenkins.
 
   ![Flattened-tree pipeline visualization showing upstream/downstream dependencies in the Checks tab](docs/images/checks-dependency.png)
@@ -29,7 +30,8 @@ It surfaces Jenkins build statuses, logs, test results, and code coverage metric
 - **Gerrit**: 3.x or higher.
 - **Jenkins**: A running instance with:
   - [Gerrit Checks API Plugin](https://plugins.jenkins.io/gerrit-checks-api/)
-  - [Code Coverage API Plugin](https://plugins.jenkins.io/code-coverage-api/) *(optional — for coverage features)*
+  - [Code Coverage Plugin](https://plugins.jenkins.io/coverage/) *(optional — for coverage features)*
+  - [Warning-ng Plugin](https://plugins.jenkins.io/warnings-ng/) *(optional — for warning features)*
 - **Core Checks Plugin**: This plugin requires the standard Gerrit `checks` plugin to be installed.
 
 ## 📦 Installation
