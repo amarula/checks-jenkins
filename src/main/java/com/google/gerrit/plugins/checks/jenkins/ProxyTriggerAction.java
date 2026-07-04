@@ -121,7 +121,8 @@ public class ProxyTriggerAction implements RestModifyView<ProjectResource, Proxy
 
     HttpResponse<String> response = httpClient.send(jenkinsRequest, HttpResponse.BodyHandlers.ofString());
     if (response.statusCode() >= 500) {
-      throw new IOException("Jenkins server error: HTTP " + response.statusCode());
+      log.atWarning().log("Jenkins server error: HTTP %d for %s", response.statusCode(), finalUrl);
+      return Response.ok("{\"_jenkins_unavailable\": true}");
     }
     return Response.withStatusCode(response.statusCode(), response.body());
   }

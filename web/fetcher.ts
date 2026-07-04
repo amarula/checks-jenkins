@@ -190,6 +190,12 @@ export class ChecksFetcher implements ChecksProvider {
         };
       }
       const data = await this.toJson(response);
+      if (data != null && data._jenkins_unavailable) {
+        return {
+          responseCode: ResponseCode.NOT_LOGGED_IN,
+          loginCallback: () => window.open(jenkins.url),
+        };
+      }
       if (data == null) {
         continue;
       }

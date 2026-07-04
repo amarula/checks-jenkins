@@ -19,7 +19,7 @@ import {ChecksFetcher} from './fetcher';
 import {CoverageClient} from './coverage';
 import {BaseComponent, BaseCoverageComponent} from './coverage-percentage-views';
 import './coverage-percentage-views';
-import {ChangeData} from '@gerritcodereview/typescript-api/checks';
+import {ChangeData, ResponseCode} from '@gerritcodereview/typescript-api/checks';
 import {EventType, PluginApi} from '@gerritcodereview/typescript-api/plugin';
 import {ChangeInfo, RevisionInfo} from '@gerritcodereview/typescript-api/rest-api';
 
@@ -30,6 +30,9 @@ window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
   // ---- Single checks provider: merge Jenkins runs + coverage ----
   plugin.checks().register({
     fetch: async (changeData: ChangeData) => {
+      // Fire both in parallel, but don't block the login prompt on coverage.
+      // When Jenkins is unavailable the fetcher returns NOT_LOGGED_IN immediately;
+      // coverage may still be resolving stale cached data — skip merging its runs.
       const [jenkinsResult, coverageResult] = await Promise.all([
         fetcher.fetch(changeData),
         coverageClient.mayBeShowLowCoverageAlert(
@@ -39,8 +42,11 @@ window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
           changeData.repo
         ),
       ]);
+      if (jenkinsResult.responseCode !== ResponseCode.OK) {
+        return jenkinsResult;
+      }
       return {
-        responseCode: jenkinsResult.responseCode,
+        responseCode: ResponseCode.OK,
         runs: [
           ...(jenkinsResult.runs || []),
           ...(coverageResult.runs || []),

@@ -175,6 +175,9 @@ export class CoverageClient {
   /** True when the coverage endpoints returned 403 — skip future fetches. */
   private coverageUnavailable: boolean = false;
 
+  /** True when Jenkins is returning 5xx — don't serve stale cached data. */
+  private jenkinsUnavailable: boolean = false;
+
   /**
    * In-memory LRU cache for coverage entries.
    * Key: JSON.stringify([jenkinsName, changeNum, patchNum])
@@ -254,6 +257,15 @@ export class CoverageClient {
     if (response == null || (response.status != null && response.status === 403)) return null;
 
     const data = await this.toJson(response);
+    // When Jenkins returns 5xx, the proxy sends _jenkins_unavailable rather
+    // than an error status.  Treat it the same as a 403 / null response:
+    // don't try to fetch coverage data, and don't serve stale cached data.
+    if (data != null && data._jenkins_unavailable) {
+      this.jenkinsUnavailable = true;
+      return null;
+    }
+    // Successful response from Jenkins — clear any previous unavailability flag.
+    this.jenkinsUnavailable = false;
     if (!data?.runs || !Array.isArray(data.runs) || data.runs.length === 0) return null;
 
     const completedRun = (data.runs as JenkinsRunEntry[]).find(r => r.status === 'COMPLETED');
@@ -439,7 +451,9 @@ export class CoverageClient {
       ]);
 
       // If the runs endpoint failed but we have cached data, serve it stale
+      // (unless Jenkins is returning 5xx — then don't show stale coverage data).
       if (!runInfo && dbEntry) {
+        if (this.jenkinsUnavailable) return;
         this.setMemoryCache(memKey, dbEntry);
         return;
       }
