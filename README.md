@@ -64,9 +64,12 @@ The plugin uses Gerrit's project-level or global configuration under the `jenkin
 [plugin "checks-jenkins"]
     url = https://jenkins.example.com/
     user = gerrit-ci-user
+    token = my-api-token
 ```
 
-Authentication uses the `user` field. If the Gerrit user is already authenticated with Jenkins (e.g., via SSO), omit `user` and the plugin uses cookie-based `credentials: 'include'`.
+The `user` and `token` fields are combined as `user:token` and Base64-encoded into an `Authorization: Basic` header for all proxied requests to Jenkins. Credentials never reach the browser.
+
+If the Gerrit user is already authenticated with Jenkins (e.g., via SSO), omit `user` and `token` and the plugin uses cookie-based `credentials: 'include'`.
 
 ### Multi-instance (per-project)
 
@@ -74,6 +77,7 @@ Authentication uses the `user` field. If the Gerrit user is already authenticate
 [jenkins "my-jenkins"]
     url = https://jenkins.example.com/
     user = gerrit-ci-user
+    token = my-api-token
 ```
 
 The `name` field is the subsection key (`my-jenkins`). Multiple Jenkins instances can be configured per project.
