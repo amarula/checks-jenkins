@@ -101,7 +101,7 @@ Paste the copied token into your config:
 
 The `name` field is the subsection key (`my-jenkins`). Multiple Jenkins instances can be configured per project.
 
-### Code Coverage
+### 📊 Code Coverage
 
 Enable coverage reporting by adding the `coverage` key:
 
@@ -130,7 +130,7 @@ When enabled, the plugin queries the Jenkins [Code Coverage API](https://plugins
 | **Low-coverage alert** | Checks tab | `Code Coverage` check run warns when a file's incremental coverage drops below 70% |
 | **Project stats** | Checks tab | Fallback summary with line/branch/file/class-level coverage when no files are below threshold |
 
-### Low-Coverage-Reason footer
+### 🔰 Low-Coverage-Reason footer
 
 To suppress low-coverage warnings on a change (demoting them from `WARNING` to `INFO`), add a footer to the commit message:
 
