@@ -126,6 +126,30 @@ const LOW_COVERAGE_REASON_PREFIXES = [
   'EXPERIMENTAL_CODE', 'OTHER'
 ];
 
+// Coverage-tier emoji matching the Jenkins Coverage plugin weather-icon
+// conventions: >= 80% sunny, 60-79% partly cloudy, 40-59% cloudy, < 40% stormy.
+const COVERAGE_GOOD = '\u{1F7E2}';      // 🟢 green circle
+const COVERAGE_MODERATE = '\u{1F7E1}';  // 🟡 yellow circle
+const COVERAGE_POOR = '\u{1F7E0}';      // 🟠 orange circle
+const COVERAGE_CRITICAL = '\u{1F534}';  // 🔴 red circle
+const COVERAGE_CHART = '\u{1F4CA}';     // 📊 bar chart
+
+/**
+ * Returns a coverage-tier emoji matching the Jenkins Coverage plugin's
+ * weather-icon conventions:
+ *   >= 80% → 🟢 (good / sunny)
+ *   60-79% → 🟡 (moderate / partly cloudy)
+ *   40-59% → 🟠 (poor / cloudy)
+ *   < 40%  → 🔴 (critical / stormy)
+ */
+export function coverageEmoji(pct: number | undefined): string {
+  if (pct === undefined) return '';
+  if (pct >= 80) return COVERAGE_GOOD;
+  if (pct >= 60) return COVERAGE_MODERATE;
+  if (pct >= 40) return COVERAGE_POOR;
+  return COVERAGE_CRITICAL;
+}
+
 export function parsePct(pct?: string): number | undefined {
   if (!pct) return undefined;
   const n = parseFloat(pct.replace('%', '').replace('+', ''));
@@ -564,7 +588,7 @@ export class CoverageClient {
         if (inc !== undefined && inc < OVERALL_LOW_COVERAGE_WARNING_BAR) {
           coverageResults.push({
             category: reason ? Category.INFO : Category.WARNING,
-            summary: `${file}: incremental ${inc}% < ${OVERALL_LOW_COVERAGE_WARNING_BAR}%`,
+            summary: `${COVERAGE_CRITICAL} ${file}: incremental ${inc}% < ${OVERALL_LOW_COVERAGE_WARNING_BAR}%`,
             message: reason
               ? 'Low-Coverage-Reason provided — CL will not be blocked.'
               : 'Please add tests for uncovered lines or add Low-Coverage-Reason in commit message.',
@@ -576,16 +600,16 @@ export class CoverageClient {
       if (coverageResults.length === 0 && projectResp?.projectStatistics) {
         const s = projectResp.projectStatistics;
         const parts: string[] = [];
-        if (s.line) parts.push(`Line: ${s.line}`);
-        if (s.branch) parts.push(`Branch: ${s.branch}`);
-        if (s.file) parts.push(`File: ${s.file}`);
-        if (s.class) parts.push(`Class: ${s.class}`);
+        if (s.line) parts.push(`Line: ${coverageEmoji(parsePct(s.line))} ${s.line}`);
+        if (s.branch) parts.push(`Branch: ${coverageEmoji(parsePct(s.branch))} ${s.branch}`);
+        if (s.file) parts.push(`File: ${coverageEmoji(parsePct(s.file))} ${s.file}`);
+        if (s.class) parts.push(`Class: ${coverageEmoji(parsePct(s.class))} ${s.class}`);
         if (parts.length > 0) {
           const linePct = parsePct(s.line);
           coverageResults.push({
             category: linePct !== undefined && linePct < OVERALL_LOW_COVERAGE_WARNING_BAR
               ? Category.WARNING : Category.INFO,
-            summary: `Project coverage: ${parts.join(', ')}`,
+            summary: `${COVERAGE_CHART} Project coverage: ${parts.join(', ')}`,
             message: `Coverage metrics for this build. Loc: ${s.loc || 'N/A'}.` +
               (projectResp.referenceBuild && projectResp.referenceBuild !== '-'
                 ? ` Reference build: ${projectResp.referenceBuild}.` : ''),

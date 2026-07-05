@@ -17,7 +17,7 @@
 
 import {css, html, LitElement, PropertyValues} from 'lit';
 import {customElement, property} from 'lit/decorators.js';
-import {PercentageData} from './coverage';
+import {PercentageData, coverageEmoji} from './coverage';
 
 const COMMON_CSS = css`
   :host {
@@ -94,6 +94,8 @@ export class BaseCoverageComponent extends BaseComponent {
 
   @property() percentageText = '-';
 
+  @property() percentageValue: number | undefined = undefined;
+
   @property() kind = '';
 
   override update(changedProperties: PropertyValues) {
@@ -125,15 +127,19 @@ export class BaseCoverageComponent extends BaseComponent {
   ) {
     if (!changeNum || !patchRange || !path) {
       this.percentageText = '-';
+      this.percentageValue = undefined;
       return;
     }
 
     if (provider) {
       const p = await provider(changeNum, path, patchRange.patchNum);
       if (p && Number.isFinite(this.getPercentageFromData(p))) {
-        this.percentageText = this.getPercentageFromData(p)!.toString() + '%';
+        const raw = this.getPercentageFromData(p)!;
+        this.percentageValue = raw;
+        this.percentageText = raw.toString() + '%';
       } else {
         this.percentageText = '-';
+        this.percentageValue = undefined;
       }
     }
   }
@@ -195,7 +201,7 @@ export class AbsoluteContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
     `;
   }
 }
@@ -218,7 +224,7 @@ export class IncrementalContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
     `;
   }
 }
@@ -303,7 +309,7 @@ export class AbsoluteUnitTestsContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
     `;
   }
 }
@@ -326,7 +332,7 @@ export class IncrementalUnitTestsContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
     `;
   }
 }
