@@ -71,6 +71,25 @@ The `user` and `token` fields are combined as `user:token` and Base64-encoded in
 
 If the Gerrit user is already authenticated with Jenkins (e.g., via SSO), omit `user` and `token` and the plugin uses cookie-based `credentials: 'include'`.
 
+#### Generating a Jenkins API token
+
+The `token` field expects a Jenkins API token, not the user's login password. To generate one:
+
+1. Log in to Jenkins.
+2. Click your username in the top-right corner, then **Configure** (or navigate to `https://<jenkins>/user/<username>/configure`).
+3. Under **API Token**, click **Add new Token**.
+4. Give it a name (e.g. `gerrit-checks`), then click **Generate**.
+5. Copy the generated token immediately — it will not be shown again.
+
+Paste the copied token into your config:
+
+```ini
+[plugin "checks-jenkins"]
+    token = 11aabb22cc33dd44ee55ff66aa77bb88cc
+```
+
+> ℹ️ The API token belongs to the Jenkins user specified in the `user` field. Make sure the user has sufficient permissions to read job statuses, access the Coverage API (if `coverage = true`), and trigger builds (for rerun functionality).
+
 ### Multi-instance (per-project)
 
 ```ini
