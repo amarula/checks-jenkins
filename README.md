@@ -130,6 +130,24 @@ When enabled, the plugin queries the Jenkins [Code Coverage API](https://plugins
 | **Low-coverage alert** | Checks tab | `Code Coverage` check run warns when a file's incremental coverage drops below 70% |
 | **Project stats** | Checks tab | Fallback summary with line/branch/file/class-level coverage when no files are below threshold |
 
+#### Coverage display
+
+File-list columns and project stats use emoji indicators matching the Jenkins Coverage plugin weather-icon tiers:
+
+| Emoji | Range | Meaning |
+|---|---|---|
+| 🟢 | ≥ 80% | Good |
+| 🟡 | 60–79% | Moderate |
+| 🟠 | 40–59% | Poor |
+| 🔴 | < 40% | Critical |
+
+Example check result:
+
+```
+📊 Project coverage: Line: 🔴 26.35%, Branch: 🔴 16.69%, File: 🟠 52.57%, Class: 🟠 53.75%
+Coverage metrics for this build. Loc: 14036.
+```
+
 ### 🔰 Low-Coverage-Reason footer
 
 To suppress low-coverage warnings on a change (demoting them from `WARNING` to `INFO`), add a footer to the commit message:
