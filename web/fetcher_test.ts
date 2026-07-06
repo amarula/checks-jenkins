@@ -558,4 +558,59 @@ suite('ChecksFetcher tree naming', () => {
     assert.equal(runs[1].checkName, `02 ${LEAF} ChildB`);
     assert.equal(runs[2].checkName, `02 ${LEAF} ChildA`);
   });
+
+  test('two separate trees are grouped by tree then by depth', () => {
+    const runs = [
+      makeRun({checkName: 'Pipeline-A', externalId: 'pipeA#1'}),
+      makeRun({checkName: 'Downstream-A2', externalId: '{"parent":"pipeA#1","run":"dsA2#3"}'}),
+      makeRun({checkName: 'Downstream-A1', externalId: '{"parent":"pipeA#1","run":"dsA1#2"}'}),
+      makeRun({checkName: 'Pipeline-B', externalId: 'pipeB#1'}),
+      makeRun({checkName: 'Downstream-B1', externalId: '{"parent":"pipeB#1","run":"dsB1#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // Tree 1 (pipeA): root + its leaves, sorted by depth
+    assert.equal(runs[0].checkName, `01 ${TREE} Pipeline-A`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Downstream-A2`);
+    assert.equal(runs[2].checkName, `02 ${LEAF} Downstream-A1`);
+    // Tree 2 (pipeB): root + its leaf, separate group
+    assert.equal(runs[3].checkName, `01 ${TREE} Pipeline-B`);
+    assert.equal(runs[4].checkName, `02 ${LEAF} Downstream-B1`);
+  });
+
+  test('two separate trees interleaved in input are grouped correctly', () => {
+    const runs = [
+      makeRun({checkName: 'Pipeline-A', externalId: 'pipeA#1'}),
+      makeRun({checkName: 'Pipeline-B', externalId: 'pipeB#1'}),
+      makeRun({checkName: 'Downstream-A1', externalId: '{"parent":"pipeA#1","run":"dsA1#2"}'}),
+      makeRun({checkName: 'Downstream-B1', externalId: '{"parent":"pipeB#1","run":"dsB1#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // Tree 1 (pipeA) grouped together
+    assert.equal(runs[0].checkName, `01 ${TREE} Pipeline-A`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Downstream-A1`);
+    // Tree 2 (pipeB) grouped together
+    assert.equal(runs[2].checkName, `01 ${TREE} Pipeline-B`);
+    assert.equal(runs[3].checkName, `02 ${LEAF} Downstream-B1`);
+  });
+
+  test('three separate trees preserve their groups', () => {
+    const runs = [
+      makeRun({checkName: 'Tree1-Root', externalId: 't1#1'}),
+      makeRun({checkName: 'Tree3-Root', externalId: 't3#1'}),
+      makeRun({checkName: 'Tree2-Root', externalId: 't2#1'}),
+      makeRun({checkName: 'Tree1-Leaf', externalId: '{"parent":"t1#1","run":"t1l#2"}'}),
+      makeRun({checkName: 'Tree3-Leaf', externalId: '{"parent":"t3#1","run":"t3l#2"}'}),
+      makeRun({checkName: 'Tree2-Leaf', externalId: '{"parent":"t2#1","run":"t2l#2"}'}),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // Tree 1 (first root in input order)
+    assert.equal(runs[0].checkName, `01 ${TREE} Tree1-Root`);
+    assert.equal(runs[1].checkName, `02 ${LEAF} Tree1-Leaf`);
+    // Tree 3 (second root encountered in input)
+    assert.equal(runs[2].checkName, `01 ${TREE} Tree3-Root`);
+    assert.equal(runs[3].checkName, `02 ${LEAF} Tree3-Leaf`);
+    // Tree 2 (third root encountered in input)
+    assert.equal(runs[4].checkName, `01 ${TREE} Tree2-Root`);
+    assert.equal(runs[5].checkName, `02 ${LEAF} Tree2-Leaf`);
+  });
 });

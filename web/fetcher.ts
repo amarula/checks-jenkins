@@ -584,6 +584,10 @@ export class ChecksFetcher implements ChecksProvider {
    *
    * When there are no parent-child relationships (single run or all independent),
    * all names are left unchanged — numbering and emojis add no value.
+   *
+   * When multiple independent trees exist in the same batch, runs are grouped
+   * by tree first, then sorted by depth within each tree.  This keeps each
+   * pipeline's upstream/downstream chain visually together in the flat list.
    */
   private computeTreeNames(runs: JenkinsCheckRun[]): void {
     if (!runs || runs.length === 0) return;
@@ -623,8 +627,33 @@ export class ChecksFetcher implements ChecksProvider {
     // If no run participates in any parent→child relationship, skip naming entirely.
     if (inGraph.size === 0) return;
 
-    // 5. Compute depth by walking the parent chain.
-    //    Use a second cache to avoid recomputing shared ancestors.
+    // 5. Find the root for each run by walking the parent chain.
+    //    A root is a run whose parent is absent from this batch.
+    const rootCache = new Map<string, string>();
+    const findRoot = (runKey: string): string => {
+      if (rootCache.has(runKey)) return rootCache.get(runKey)!;
+      const parent = parentMap.get(runKey);
+      if (parent === null || parent === undefined || !allKeys.has(parent)) {
+        rootCache.set(runKey, runKey);
+        return runKey;
+      }
+      const root = findRoot(parent);
+      rootCache.set(runKey, root);
+      return root;
+    };
+
+    // 6. Assign a tree index to each unique root in order of first
+    //    appearance in the run list.
+    const treeIndex = new Map<string, number>();
+    for (const p of parsed) {
+      if (!p.runKey || !inGraph.has(p.runKey)) continue;
+      const root = findRoot(p.runKey);
+      if (!treeIndex.has(root)) {
+        treeIndex.set(root, treeIndex.size);
+      }
+    }
+
+    // 7. Compute depth by walking the parent chain.
     const depthCache = new Map<string, number>();
     const computeDepth = (runKey: string): number => {
       if (depthCache.has(runKey)) return depthCache.get(runKey)!;
@@ -638,25 +667,34 @@ export class ChecksFetcher implements ChecksProvider {
       return d;
     };
 
-    // 6. Apply the new checkName only to runs that are part of the tree.
-    //    Runs without a valid externalId or outside the graph keep their original name.
-    const depthByRun = new Map<JenkinsCheckRun, number>();
+    // 8. Apply the new checkName only to runs that are part of the tree.
+    //    Runs without a valid externalId or outside the graph keep their
+    //    original name.
+    interface RunMeta { depth: number; treeIndex: number; }
+    const runMeta = new Map<JenkinsCheckRun, RunMeta>();
     for (let i = 0; i < runs.length; i++) {
       const {runKey} = parsed[i];
       if (!runKey || !inGraph.has(runKey)) continue;
-      const depth = computeDepth(runKey);
-      depthByRun.set(runs[i], depth);
-      const level = String(depth + 1).padStart(2, '0');
+      const meta: RunMeta = {
+        depth: computeDepth(runKey),
+        treeIndex: treeIndex.get(findRoot(runKey))!,
+      };
+      runMeta.set(runs[i], meta);
+      const level = String(meta.depth + 1).padStart(2, '0');
       const emoji = hasChildren.has(runKey) ? ChecksFetcher.TREE_EMOJI : ChecksFetcher.LEAF_EMOJI;
       runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
     }
 
-    // 7. Stable-sort runs by depth so the tree renders top-down in the UI.
-    //    In-graph runs order by depth ascending; non-graph runs go last.
+    // 9. Stable-sort: in-graph runs first, grouped by tree, then by depth
+    //    within each tree.  Non-graph runs stay at the end.
     runs.sort((a, b) => {
-      const depthA = depthByRun.get(a) ?? Infinity;
-      const depthB = depthByRun.get(b) ?? Infinity;
-      return depthA - depthB;
+      const ma = runMeta.get(a);
+      const mb = runMeta.get(b);
+      if (!ma && !mb) return 0;
+      if (!ma) return 1;
+      if (!mb) return -1;
+      if (ma.treeIndex !== mb.treeIndex) return ma.treeIndex - mb.treeIndex;
+      return ma.depth - mb.depth;
     });
   }
 
