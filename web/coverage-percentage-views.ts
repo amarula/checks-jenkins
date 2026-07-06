@@ -201,7 +201,7 @@ export class AbsoluteContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
     `;
   }
 }
@@ -224,7 +224,7 @@ export class IncrementalContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
     `;
   }
 }
@@ -309,7 +309,7 @@ export class AbsoluteUnitTestsContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
     `;
   }
 }
@@ -332,7 +332,7 @@ export class IncrementalUnitTestsContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)} ${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
     `;
   }
 }
