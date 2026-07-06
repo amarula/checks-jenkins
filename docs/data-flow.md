@@ -52,8 +52,10 @@ Browser (ChecksFetcher)           Gerrit Proxy              Jenkins
   │  ── Phase 0b: Tree naming ──     │                        │
   │  computeTreeNames(data.runs)     │                        │
   │  Parse externalId → parent map   │                        │
+  │  Find roots, assign tree index   │                        │
   │  Build inGraph set (runs with    │                        │
   │    parent or child relationship) │                        │
+  │  Group by tree, then by depth    │                        │
   │  Rewrite checkName in-place:     │                        │
   │    "01 🌳 Build"                 │                        │
   │    "02 🍃 Test"                   │                        │

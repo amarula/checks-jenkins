@@ -81,7 +81,21 @@ The Jenkins-side `gerrit-checks-api-plugin` encodes relationships in `externalId
 
 Only runs that participate in a parent→child relationship (as either parent or child) get the prefix. Independent runs in the same batch, and all enrichment runs (warnings-ng tools, JUnit, Code Coverage), keep their original names unchanged.
 
+#### Multiple independent trees
+
+When multiple independent pipeline trees appear in the same batch (e.g. two separate upstream pipelines each with their own downstream jobs), runs are grouped by tree first, then sorted by depth within each tree. Tree order follows the first-appearance order of each tree's root in the input from Jenkins. This keeps each pipeline's upstream/downstream chain visually together in the flat list.
+
+Run labels visible to the user in each component of the pipeline tree are:
+
+| Component | Example |
+|---|---|
+| **Number** | `01`, `02`, `03` — depth within **that tree**, zero-padded to 2 digits |
+| **Emoji** | 🌳 if the job has downstream children, 🍃 if it is terminal |
+| **Original name** | The check name assigned by Jenkins |
+
 #### Example output
+
+*Single tree:*
 
 ```
 01 🌳 Base Initialization
@@ -91,6 +105,18 @@ Only runs that participate in a parent→child relationship (as either parent or
 03 🍃 Database Migrations
 04 🍃 Final Release
 ```
+
+*Two independent trees in the same batch:*
+
+```
+01 🌳 Pipeline-A          ← tree 1 root
+02 🍃 Downstream-A1       ← tree 1 leaves
+02 🍃 Downstream-A2
+01 🌳 Pipeline-B          ← tree 2 root
+02 🍃 Downstream-B1       ← tree 2 leaf
+```
+
+Each tree's numbering restarts at `01` for its root. Tree grouping ensures all runs belonging to one pipeline appear together before the next tree begins.
 
 ### Category and tag-color mapping (warnings-ng)
 
