@@ -193,10 +193,9 @@ Detailed technical documentation is available in the [`docs/`](docs/) directory:
 
 Contributions are welcome! This project is maintained by Amarula Solutions.
 
-- Fork the repository.
-- Create a feature branch (git checkout -b feature/improvement).
-- Commit your changes.
-- Push to the branch and open a Pull Request.
+- Clone from gerrithub.io https://gerrithub.io/admin/repos/amarula/checks-jenkins,general
+- Create your changeset to be included
+- Push them using git push origin HEAD:refs/for/master
 
 > 📖 See [Contributing](docs/contributing.md) for development setup, build commands, and testing.
 
