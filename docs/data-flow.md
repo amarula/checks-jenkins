@@ -247,6 +247,32 @@ Gerrit Diff View             CoverageClient              Cache
 
 ## Rerun trigger flow
 
+Rerun uses different HTTP methods depending on the authentication mode:
+
+- **No `user` configured (SSO/cookie-based)**: `fetchFromJenkins()` ignores the `method` parameter and issues a plain `fetch(url, {credentials: 'include'})`, which defaults to **GET**.  Redirects (302) are followed automatically by the browser.
+- **`user` configured (Basic auth via proxy)**: The proxy receives `method: "POST"` and forwards as a POST to Jenkins.
+
+### No-auth path (SSO)
+
+```
+Browser                                              Jenkins
+  │                                                     │
+  │  User clicks "Rerun"                                │
+  │  action in Checks UI                                │
+  │                                                     │
+  │  GET /job/.../build/index?token=...                 │
+  │  {credentials: 'include'}                           │
+  │────────────────────────────────────────────────────►│
+  │◄─────────────── 302 (followed) ────────────────────│
+  │                                                     │
+  │  ActionResult {                                     │
+  │    message: "Run triggered.",                       │
+  │    shouldReload: true                               │
+  │  }                                                  │
+```
+
+### Auth path (Basic auth via proxy)
+
 ```
 Browser                   Gerrit Proxy              Jenkins
   │                           │                        │
@@ -256,7 +282,7 @@ Browser                   Gerrit Proxy              Jenkins
   │  POST proxy-trigger       │                        │
   │  {jenkinsname,            │                        │
   │   urlpath: "job/.../      │                        │
-  │     build?token=...",     │                        │
+  │     build/index",         │                        │
   │   method: "POST"}         │                        │
   │──────────────────────────►│  POST /job/.../build   │
   │                           │───────────────────────►│
@@ -270,4 +296,4 @@ Browser                   Gerrit Proxy              Jenkins
   │  }                        │                        │
 ```
 
-The 302 response from Jenkins is caught as an exception by `fetch()` (redirect mode is not followed for POST), but `rerun()` explicitly checks for `302` in the error message and treats it as success.
+The auth path's 302 response from Jenkins produces an empty body that fails JSON parsing with a `"302"` error message.  `rerun()` explicitly checks for `302` in the error string and treats it as success.
