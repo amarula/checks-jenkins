@@ -34,81 +34,140 @@ The frontend receives a `Set` of config objects. It uses only the first entry (`
 
 ## Checks polling flow
 
+The fetcher uses a **stale-while-revalidate** pattern. On each poll, it starts the network request to Jenkins but checks the IndexedDB cache first. If cached data exists and is under 2 minutes old, it returns immediately while a background update refreshes the cache. Only when the background update detects changed data (different `checkName`, `status`, or `statusDescription`) does it trigger a UI reload via `announceUpdate()`.
+
+### Cache hit path (fast)
+
 ```
-Browser (ChecksFetcher)           Gerrit Proxy              Jenkins
-  │                                  │                        │
-  │  60-second polling interval      │                        │
-  │                                  │                        │
-  │  ── Phase 0: Fetch runs ──       │                        │
-  │  POST proxy-trigger              │                        │
-  │  {jenkinsname, urlpath, "GET"}   │                        │
-  │─────────────────────────────────►│  GET /gerrit-checks/   │
-  │                                  │    runs?change=X&      │
-  │                                  │    patchset=Y          │
-  │                                  │───────────────────────►│
-  │                                  │◄───────────────────────│
-  │◄─────────────────────────────────│                        │
-  │                                  │                        │
-  │  ── Phase 0b: Tree naming ──     │                        │
-  │  computeTreeNames(data.runs)     │                        │
-  │  Parse externalId → parent map   │                        │
-  │  Find roots, assign tree index   │                        │
-  │  Build inGraph set (runs with    │                        │
-  │    parent or child relationship) │                        │
-  │  Group by tree, then by depth    │                        │
-  │  Rewrite checkName in-place:     │                        │
-  │    "01 🌳 Build"                 │                        │
-  │    "02 🍃 Test"                   │                        │
-  │  (skipped if no dependencies)    │                        │
-  │                                  │                        │
-  │  ── Phase A: Error explanation (parallel per run) ──      │
-  │  For each COMPLETED run:         │                        │
-  │    POST proxy-trigger            │                        │
-  │    {urlpath: statusLink +        │                        │
-  │     "error-explanation/api/json"}│                        │
-  │─────────────────────────────────►│  GET .../error-        │
-  │                                  │    explanation/api/json│
-  │                                  │───────────────────────►│
-  │                                  │◄───────────────────────│
-  │◄─────────────────────────────────│                        │
-  │                                  │                        │
-  │  ── Phase B: Warnings + Tests (parallel) ──               │
-  │  buildWarnings() per run:        │                        │
-  │    POST proxy-trigger            │                        │
-  │    {urlpath: statusLink +        │                        │
-  │     "warnings-ng/api/json"}      │                        │
-  │─────────────────────────────────►│───────────────────────►│
-  │                                  │◄───────────────────────│
-  │◄─────────────────────────────────│                        │
-  │    For each tool:                │                        │
-  │      POST proxy-trigger          │                        │
-  │      {urlpath: statusLink +      │                        │
-  │       toolId + "/all/api/json"}  │                        │
-  │─────────────────────────────────►│───────────────────────►│
-  │                                  │◄───────────────────────│
-  │◄─────────────────────────────────│                        │
-  │                                  │                        │
-  │  buildTestResults() per run:     │                        │
-  │    POST proxy-trigger            │                        │
-  │    {urlpath: statusLink +        │                        │
-  │     "testReport/api/json?tree=   │                        │
-  │     suites[cases[...]]"}         │                        │
-  │─────────────────────────────────►│───────────────────────►│
-  │                                  │◄───────────────────────│
-  │◄─────────────────────────────────│                        │
-  │                                  │                        │
-  │  ── Merge & render ──            │                        │
-  │  combine runs + enrichments      │                        │
-  │  return to Gerrit Checks UI      │                        │
+Browser (ChecksFetcher)           IndexedDB               Gerrit Proxy        Jenkins
+  │                                  │                        │                  │
+  │  60-second polling interval      │                        │                  │
+  │                                  │                        │                  │
+  │  Start network request           │                        │                  │
+  │  (don't await)                   │                        │                  │
+  │─────────────────────────────────────────────────────────►│─────────────────►│
+  │                                  │                        │                  │
+  │  GET runsKey from cache          │                        │                  │
+  │─────────────────────────────────►│                        │                  │
+  │◄──── CachedRuns {runs, ts} ──────│                        │                  │
+  │                                  │                        │                  │
+  │  Cache hit, age < 2 min!         │                        │                  │
+  │  Use cached runs.                │                        │                  │
+  │  Fire backgroundUpdateRuns()     │                        │                  │
+  │  (structuredClone for safety)    │                        │                  │
+  │                                  │                        │                  │
+  │  ── Tree naming + enrichment ──  │                        │                  │
+  │  ── convert() + merge ──         │                        │                  │
+  │  return to Gerrit Checks UI      │                        │                  │
+  │  (all from cache — instant!)     │                        │                  │
+  │                                  │                        │                  │
+  │  ... meanwhile, in background:   │                        │                  │
+  │  backgroundUpdateRuns()          │                        │                  │
+  │    await networkPromise          │                        │                  │
+  │    ◄──────── response ───────────│◄───────────────────────│                  │
+  │    runsEqual(current, fresh)?    │                        │                  │
+  │    → YES: no-op, skip everything │                        │                  │
+  │    → NO:  structuredClone()     │                        │                  │
+  │           cacheService.put()     │                        │                  │
+  │─────────────────────────────────►│                        │                  │
+  │           announceUpdate()       │                        │                  │
+  │           → Gerrit re-fetches    │                        │                  │
+  │           → this time cache has  │                        │                  │
+  │             fresh data           │                        │                  │
+```
+
+### Cache miss path (slow)
+
+```
+Browser (ChecksFetcher)           IndexedDB               Gerrit Proxy        Jenkins
+  │                                  │                        │                  │
+  │  Start network request           │                        │                  │
+  │─────────────────────────────────────────────────────────►│─────────────────►│
+  │                                  │                        │                  │
+  │  GET runsKey from cache          │                        │                  │
+  │─────────────────────────────────►│                        │                  │
+  │◄──── undefined ──────────────────│                        │                  │
+  │                                  │                        │                  │
+  │  Cache MISS (or expired).        │                        │                  │
+  │  Must await network.             │                        │                  │
+  │  ◄──────── 200 ──────────────────│◄─────── 200 ──────────│                  │
+  │                                  │                        │                  │
+  │  Auth checks pass.               │                        │                  │
+  │  structuredClone(data.runs).     │                        │                  │
+  │  cacheService.put(runsKey, ...)  │                        │                  │
+  │─────────────────────────────────►│                        │                  │
+  │                                  │                        │                  │
+  │  ── Tree naming + enrichment ──  │                        │                  │
+  │  ── convert() + merge ──         │                        │                  │
+  │  return to Gerrit Checks UI      │                        │                  │
+  │  (from network — normal latency) │                        │                  │
+```
+
+### Enrichment phases (both paths converge here)
+
+```
+  ── Phase 0b: Tree naming ──
+  computeTreeNames(data.runs)
+  Parse externalId → parent map
+  Find roots, assign tree index
+  Build inGraph set (runs with
+    parent or child relationship)
+  Group by tree, then by depth
+  Rewrite checkName in-place:
+    "01 🌳 Build"
+    "02 🍃 Test"
+  (skipped if no dependencies)
+
+  ── Phase A: Error explanation (parallel per run) ──
+  For each COMPLETED run:
+    POST proxy-trigger
+    {urlpath: statusLink +
+     "error-explanation/api/json"}
+  ─────────────────────────────────►  GET .../error-
+                                      explanation/api/json
+                                    ───────────────────────►
+                                    ◄───────────────────────
+  ◄─────────────────────────────────
+
+  ── Phase B: Warnings + Tests (parallel) ──
+  buildWarnings() per run:
+    POST proxy-trigger
+    {urlpath: statusLink +
+     "warnings-ng/api/json"}
+  ─────────────────────────────────►───────────────────────►
+                                    ◄───────────────────────
+  ◄─────────────────────────────────
+    For each tool:
+      POST proxy-trigger
+      {urlpath: statusLink +
+       toolId + "/all/api/json"}
+  ─────────────────────────────────►───────────────────────►
+                                    ◄───────────────────────
+  ◄─────────────────────────────────
+
+  buildTestResults() per run:
+    POST proxy-trigger
+    {urlpath: statusLink +
+     "testReport/api/json?tree=
+     suites[cases[...]]"}
+  ─────────────────────────────────►───────────────────────►
+                                    ◄───────────────────────
+  ◄─────────────────────────────────
+
+  ── Merge & render ──
+  combine runs + enrichments
+  return to Gerrit Checks UI
 ```
 
 ### Concurrency notes
 
+- Phase 0 (fetch runs) uses the stale-while-revalidate cache — the network request is started eagerly but only awaited on cache miss.
 - Phase A and Phase B enrichment only runs for runs with `status === COMPLETED`.
 - Phase A (error explanation) runs in parallel with Phase B (warnings + tests).
 - Within Phase B, all enrichment fetches (warnings, tests) across all runs are launched concurrently.
 - Within `buildWarnings()`, per-tool issue fetches use `Promise.allSettled` for resilience — a single failing tool doesn't block others.
 - Unavailable endpoints (403/error on prior poll) are **skipped entirely** — no HTTP request is made.
+- Background updates fire `announceUpdate()` only when `runsEqual()` detects actual changes, preventing unnecessary UI reloads.
 
 ## Coverage fetch flow
 
