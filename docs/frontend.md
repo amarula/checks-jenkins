@@ -25,24 +25,48 @@ Implements `ChecksProvider`. The core polling logic that fetches Jenkins build s
 ```
 fetch(changeData)
   │
-  ├─ 1. fetchConfig()           → GET /projects/{repo}/checks-jenkins~config
+  ├─ 1. fetchConfig()              → GET /projects/{repo}/checks-jenkins~config
   │
-  ├─ 2. fetchFromJenkins()      → GET {jenkins}/gerrit-checks/runs?change=X&patchset=Y
+  ├─ 2. For each Jenkins instance:
+  │     │
+  │     ├─ Start networkPromise     → GET {jenkins}/gerrit-checks/runs?change=X&patchset=Y
+  │     │   (don't await yet)
+  │     │
+  │     ├─ Check IndexedDB          → cacheService.get([name, changeNumber, patchsetNumber])
+  │     │
+  │     ├─ CACHE HIT (age < 2 min TTL):
+  │     │     • Use cached runs immediately
+  │     │     • Fire backgroundUpdateRuns(networkPromise, key, structuredClone(cachedRuns))
+  │     │       → awaits network, compares via runsEqual()
+  │     │       → only on change: update cache + announceUpdate()
+  │     │
+  │     └─ CACHE MISS:
+  │           • Await networkPromise
+  │           • Auth checks (403/null → NOT_LOGGED_IN)
+  │           • structuredClone(data.runs) and cache it
   │
-  ├─ 3. computeTreeNames()      → Parse externalId for parent-child relationships,
-  │                                  rewrite checkName as "NN 🌳|🍃 originalName"
-  │                                  (skipped when no dependencies exist)
+  ├─ 3. computeTreeNames()         → Parse externalId for parent-child relationships,
+  │                                     rewrite checkName as "NN 🌳|🍃 originalName"
+  │                                     (skipped when no dependencies exist)
   │
-  ├─ 4. Phase A (parallel)      → Error explanation enrichment for COMPLETED runs
-  │     └─ explainBuildFailure()   GET {statusLink}error-explanation/api/json
+  ├─ 4. Phase A (parallel)         → Error explanation enrichment for COMPLETED runs
+  │     └─ explainBuildFailure()      GET {statusLink}error-explanation/api/json
   │
-  ├─ 5. Phase B (parallel)      → Warnings + test enrichment (cached in IndexedDB)
-  │     ├─ buildWarnings()         GET {statusLink}warnings-ng/api/json
-  │     │   └─ for each tool →     GET {statusLink}{toolId}/all/api/json?tree=...
-  │     └─ buildTestResults()      GET {statusLink}testReport/api/json?tree=...
+  ├─ 5. Phase B (parallel)         → Warnings + test enrichment (cached in IndexedDB)
+  │     ├─ buildWarnings()            GET {statusLink}warnings-ng/api/json
+  │     │   └─ for each tool →        GET {statusLink}{toolId}/all/api/json?tree=...
+  │     └─ buildTestResults()         GET {statusLink}testReport/api/json?tree=...
   │
-  └─ 6. convert()               → Map JenkinsCheckRun → CheckRun with action callbacks
+  └─ 6. convert()                  → Map JenkinsCheckRun → CheckRun with action callbacks
 ```
+
+### Stale-while-revalidate
+
+The fetcher applies the stale-while-revalidate pattern to the `/gerrit-checks/runs` endpoint — the slowest network hop in the polling cycle. Raw `JenkinsCheckRun[]` payloads are cached in IndexedDB with a 2-minute TTL.
+
+On cache hit, data appears instantly (no network wait) while `backgroundUpdateRuns()` fetches fresh data in the background. The background method compares via `runsEqual()` (checks `checkName`, `status`, `statusDescription`) and only triggers a UI reload via `plugin.checks().announceUpdate()` when something actually changed. This prevents unnecessary UI flicker while keeping the display current.
+
+The raw runs are cached before `computeTreeNames()` mutations to avoid storing already-prefixed names. `structuredClone()` is used at every boundary to prevent shared-reference mutation.
 
 ### Enrichment details
 
