@@ -24,7 +24,11 @@ import {EventType, PluginApi} from '@gerritcodereview/typescript-api/plugin';
 import {ChangeInfo, RevisionInfo} from '@gerritcodereview/typescript-api/rest-api';
 
 window.Gerrit?.install(async (plugin: PluginApi): Promise<void> => {
-  const fetcher = new ChecksFetcher(plugin);
+  const fetcher = new ChecksFetcher(plugin, () => {
+    // Background update detected new data — force Gerrit to re-fetch
+    // checks so the UI picks up the fresh data immediately.
+    plugin.checks().announceUpdate();
+  });
   const coverageClient = new CoverageClient(plugin);
 
   // ---- Single checks provider: merge Jenkins runs + coverage ----

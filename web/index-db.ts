@@ -24,7 +24,13 @@ export type RequestKey = [name: string, changeNumber: number, patchsetNumber: nu
  */
 export type CoverageCacheKey = [name: string, changeNumber: number, patchsetNumber: number];
 
-type CacheKey = RequestKey | CoverageCacheKey;
+/**
+ * Runs cache key: [jenkinsName, changeNumber, patchsetNumber]
+ * Caches the raw JenkinsCheckRun[] payload for stale-while-revalidate.
+ */
+export type RunsCacheKey = [name: string, changeNumber: number, patchsetNumber: number];
+
+type CacheKey = RequestKey | CoverageCacheKey | RunsCacheKey;
 
 interface CacheEntry<T> {
   key: CacheKey;
@@ -42,6 +48,7 @@ const DB_VERSION = 2;
  *
  * Supports multiple object stores within a single database:
  *  - "request_store"  — fetcher check-run data (4-element RequestKey)
+ *                       and raw runs payloads (3-element RunsCacheKey)
  *  - "coverage_store" — coverage report data (3-element CoverageCacheKey)
  */
 export class RequestLRUCache<T> {

@@ -29,7 +29,7 @@ import {
 } from '@gerritcodereview/typescript-api/checks';
 import { PluginApi } from '@gerritcodereview/typescript-api/plugin';
 import { cacheService } from './request-cache-service';
-import { RequestKey } from './index-db';
+import { RequestKey, RunsCacheKey } from './index-db';
 
 export declare interface Config {
   name: string;
@@ -111,6 +111,11 @@ interface ErrorResponse {
   explanation?: string;
 }
 
+interface CachedRuns {
+  runs: JenkinsCheckRun[];
+  timestamp: number;
+}
+
 export class ChecksFetcher implements ChecksProvider {
   private plugin: PluginApi;
 
@@ -128,12 +133,25 @@ export class ChecksFetcher implements ChecksProvider {
    *  for Jenkins to update its status to RUNNING. */
   private static readonly RERUN_DISABLE_TTL_MS = 60_000;
 
+  /** Maximum age (ms) for cached runs before forcing a network refresh. */
+  private static readonly RUNS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
+
+  /** Callback invoked when a background update detects changed data.
+   *  Set by the plugin layer to trigger a UI re-fetch. */
+  private onDataChanged: (() => void) | null = null;
+
   private static readonly TREE_EMOJI = '\u{1F333}';   // 🌳 — has downstream children
   private static readonly LEAF_EMOJI = '\u{1F343}';   // 🍃 — terminal job
 
-  constructor(pluginApi: PluginApi) {
+  constructor(pluginApi: PluginApi, reloadCb?: () => void) {
     this.plugin = pluginApi;
     this.configs = null;
+    if (reloadCb) this.onDataChanged = reloadCb;
+  }
+
+  /** Register a callback to be invoked when a background update detects new data. */
+  setOnDataChanged(callback: () => void): void {
+    this.onDataChanged = callback;
   }
 
   private isUnavailable(jenkinsName: string, endpoint: string): boolean {
@@ -157,6 +175,54 @@ export class ChecksFetcher implements ChecksProvider {
     }
   }
 
+  /**
+   * Fast structural comparison of two JenkinsCheckRun arrays.
+   * Returns true when both arrays have the same length and each run has the
+   * same checkName, status, and statusDescription at the same index.
+   */
+  private runsEqual(a: JenkinsCheckRun[], b: JenkinsCheckRun[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].checkName !== b[i].checkName) return false;
+      if (a[i].status !== b[i].status) return false;
+      if (a[i].statusDescription !== b[i].statusDescription) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Background cache refresh: awaits the in-flight network response, compares
+   * the fresh data against what we already showed the user, and — only when
+   * something actually changed — writes the new runs to IndexedDB and signals
+   * the plugin layer to trigger a UI reload.
+   */
+  private async backgroundUpdateRuns(
+    networkPromise: Promise<Response | null>,
+    runsKey: RunsCacheKey,
+    currentRuns: JenkinsCheckRun[],
+  ): Promise<void> {
+    try {
+      const response = await networkPromise;
+      if (response == null || (response.status != undefined && response.status === 403)) return;
+
+      const data = await this.toJson(response);
+      if (data == null || data._jenkins_unavailable) return;
+      if (!data?.runs || !Array.isArray(data.runs) || data.runs.length === 0) return;
+
+      // Nothing new — skip the cache write and UI reload
+      if (this.runsEqual(currentRuns, data.runs)) return;
+
+      // Deep-clone before caching: computeTreeNames mutates runs in-place and
+      // we must not corrupt the cached copy that will be reused on future polls.
+      const cloned: JenkinsCheckRun[] = structuredClone(data.runs);
+      await cacheService.put(runsKey, {runs: cloned, timestamp: Date.now()});
+
+      this.onDataChanged?.();
+    } catch {
+      // Network flakiness in the background must not surface to the user.
+    }
+  }
+
   async fetch(changeData: ChangeData) {
     await this.fetchConfig(changeData)
       .then(result => {
@@ -175,37 +241,69 @@ export class ChecksFetcher implements ChecksProvider {
     const checkRuns: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
-      const response = await (async () => {
+
+      // Start the network request eagerly but don't await it yet —
+      // we check the cache first so we can return stale data immediately.
+      const networkPromise = (async () => {
         try {
           return await this.fetchFromJenkins(jenkins, changeData.repo, checks_url, "GET");
         } catch (e) {
           return null;
         }
       })();
-      if (response == null || (response.status != undefined && response.status === 403)) {
-        // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
-        return {
-          responseCode: ResponseCode.NOT_LOGGED_IN,
-          loginCallback: () => window.open(jenkins.url),
-        };
-      }
-      const data = await this.toJson(response);
-      if (data != null && data._jenkins_unavailable) {
-        return {
-          responseCode: ResponseCode.NOT_LOGGED_IN,
-          loginCallback: () => window.open(jenkins.url),
-        };
-      }
-      if (data == null) {
-        continue;
-      }
-      if (!data?.runs || !Array.isArray(data.runs)) {
-        continue;
-      }
-      const runEntries = Object.entries(data.runs);
-      const totalRuns: number = runEntries.length;
-      if (totalRuns == 0) {
-        continue;
+
+      const runsKey: RunsCacheKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber];
+      const cachedEntry: CachedRuns | undefined = await cacheService.get(runsKey);
+      const now = Date.now();
+      const cacheHit = cachedEntry
+        && cachedEntry.runs
+        && Array.isArray(cachedEntry.runs)
+        && cachedEntry.runs.length > 0
+        && (now - cachedEntry.timestamp) < ChecksFetcher.RUNS_CACHE_TTL_MS;
+
+      let data: any;       // the { runs: JenkinsCheckRun[] } payload we'll process
+      let totalRuns: number;
+
+      if (cacheHit) {
+        // Serve cached runs immediately; refresh in background.
+        data = { runs: cachedEntry!.runs };
+        totalRuns = cachedEntry!.runs.length;
+        // Clone before computeTreeNames mutates checkName in-place —
+        // backgroundUpdateRuns needs the originals for comparison.
+        this.backgroundUpdateRuns(
+          networkPromise, runsKey, structuredClone(cachedEntry!.runs));
+      } else {
+        // No usable cache — must await the network.
+        const response = await networkPromise;
+        if (response == null || (response.status != undefined && response.status === 403)) {
+          // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
+          return {
+            responseCode: ResponseCode.NOT_LOGGED_IN,
+            loginCallback: () => window.open(jenkins.url),
+          };
+        }
+        data = await this.toJson(response);
+        if (data != null && data._jenkins_unavailable) {
+          return {
+            responseCode: ResponseCode.NOT_LOGGED_IN,
+            loginCallback: () => window.open(jenkins.url),
+          };
+        }
+        if (data == null) {
+          continue;
+        }
+        if (!data?.runs || !Array.isArray(data.runs)) {
+          continue;
+        }
+        totalRuns = data.runs.length;
+        if (totalRuns == 0) {
+          continue;
+        }
+
+        // Cache the raw runs for next time (deep-clone before
+        // computeTreeNames mutates them in-place).
+        const cloned: JenkinsCheckRun[] = structuredClone(data.runs);
+        await cacheService.put(runsKey, { runs: cloned, timestamp: now });
       }
 
       // Apply flattened-tree naming before enrichment so checkName
@@ -266,16 +364,15 @@ export class ChecksFetcher implements ChecksProvider {
       //  - Keys added by user clicks survive the shouldReload re-fetch gap
       //    (Jenkins may not have queued the job yet) via a TTL.
       //  - Keys whose TTL has expired with no active run are removed.
-      const now = Date.now();
       for (const run of data.runs) {
         if (run.status === RunStatus.RUNNING || run.status === RunStatus.RUNNABLE) {
           const {runKey} = this.parseExternalId(run.externalId);
           if (runKey) this.triggeredReruns.set(runKey, now);
         }
       }
-      for (const [key, ts] of this.triggeredReruns) {
+      for (const [k, ts] of this.triggeredReruns) {
         if (now - ts > ChecksFetcher.RERUN_DISABLE_TTL_MS) {
-          this.triggeredReruns.delete(key);
+          this.triggeredReruns.delete(k);
         }
       }
 
