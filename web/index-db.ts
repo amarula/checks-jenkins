@@ -137,10 +137,10 @@ export class RequestLRUCache<T> {
 
       // Staleness pruning only applies to 4-element fetcher keys
       if (key.length >= 4) {
-        const [name, patch, change, runs] = key;
+        const [name, changeNumber, patchsetNumber, runs] = key;
         const range = IDBKeyRange.bound(
-          [name, patch, change, 0] as IDBValidKey,
-          [name, patch, change, Infinity] as IDBValidKey
+          [name, changeNumber, patchsetNumber, 0] as IDBValidKey,
+          [name, changeNumber, patchsetNumber, Infinity] as IDBValidKey
         );
         const cursorRequest = store.openCursor(range);
 
