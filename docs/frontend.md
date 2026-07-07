@@ -175,9 +175,9 @@ A `Set<string>` keyed by `"jenkinsName:endpoint"` tracks endpoints that returned
 
 ### Rerun action
 
-The `convert()` method wraps each Jenkins action's URL into a Gerrit `Action` with a `callback` that POSTs to the proxy. The rerun endpoint expects a 302 redirect on success — this is explicitly handled as success rather than an error.
+The `convert()` method wraps each Jenkins action's URL into a Gerrit `Action` with a `callback` that calls `this.rerun()`.  In **SSO mode** (no `user` configured), this issues a direct GET to Jenkins with `credentials: 'include'`.  In **auth mode** (`user` configured), the request is proxied through Gerrit as a POST.  Jenkins typically returns a 302 redirect — in the auth path this is caught as an exception and explicitly handled as success.
 
-**Double-trigger prevention**: A `triggeredReruns: Set<string>` field tracks runKeys (from `externalId`) for active reruns. On every `fetch()` cycle, RUNNING/RUNNABLE runs populate this set (disabling all rerun buttons). When a run completes, its key drops out and the button re-enables. The `rerun()` method also adds the key eagerly on click so the immediate `shouldReload` re-fetch maintains the disabled state.
+**Double-trigger prevention**: A `triggeredReruns: Map<string, number>` field tracks runKeys (from `externalId`) for active reruns. On every `fetch()` cycle, RUNNING/RUNNABLE runs populate this map (disabling all rerun buttons). When a run completes, its key ages out after 60 s TTL. The `rerun()` method also adds the key eagerly on click so the immediate `shouldReload` re-fetch maintains the disabled state.
 
 Tooltips explain the reason: `"Run already triggered"` for the specific run, or `"A pipeline job is currently running"` when another run in the batch is active.
 
