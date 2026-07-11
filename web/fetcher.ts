@@ -833,6 +833,9 @@ export class ChecksFetcher implements ChecksProvider {
             shouldReload: true,
           }
         }
+        // Clear the triggeredReruns entry so the rerun button is
+        // re-enabled on the next fetch cycle, allowing the user to retry.
+        if (runKey) this.triggeredReruns.delete(runKey);
         return { message: `Triggering the run failed: ${e.message}` };
       });
   }
