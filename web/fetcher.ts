@@ -121,8 +121,9 @@ export class ChecksFetcher implements ChecksProvider {
 
   configs: Config[] | null;
 
-  /** Endpoints that returned 403/error — skip on future polls to avoid request storms. */
-  private unavailableEndpoints: Set<string> = new Set();
+  /** Endpoints that returned 403/error — skipped after {@link UNAVAILABLE_RETRY_BUDGET}
+   *  consecutive failures.  The counter resets on the first successful request. */
+  private unavailableEndpoints: Map<string, number> = new Map();
 
   /** RunKeys that the user has clicked rerun on, or that are currently RUNNING/RUNNABLE.
    *  Maps key to the timestamp (Date.now()) when it was added. While non-empty,
@@ -132,6 +133,10 @@ export class ChecksFetcher implements ChecksProvider {
   /** Maximum time (ms) a recently-clicked rerun remains disabled while waiting
    *  for Jenkins to update its status to RUNNING. */
   private static readonly RERUN_DISABLE_TTL_MS = 60_000;
+
+  /** Number of consecutive failures before an enrichment endpoint is
+   *  considered unavailable and skipped on future polls. */
+  private static readonly UNAVAILABLE_RETRY_BUDGET = 2;
 
   /** Maximum age (ms) for cached runs before forcing a network refresh. */
   private static readonly RUNS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
@@ -155,11 +160,18 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   private isUnavailable(jenkinsName: string, endpoint: string): boolean {
-    return this.unavailableEndpoints.has(`${jenkinsName}:${endpoint}`);
+    const key = `${jenkinsName}:${endpoint}`;
+    return (this.unavailableEndpoints.get(key) ?? 0) >= ChecksFetcher.UNAVAILABLE_RETRY_BUDGET;
   }
 
   private markUnavailable(jenkinsName: string, endpoint: string): void {
-    this.unavailableEndpoints.add(`${jenkinsName}:${endpoint}`);
+    const key = `${jenkinsName}:${endpoint}`;
+    this.unavailableEndpoints.set(key, (this.unavailableEndpoints.get(key) ?? 0) + 1);
+  }
+
+  /** Reset the failure counter when an endpoint responds successfully. */
+  private markAvailable(jenkinsName: string, endpoint: string): void {
+    this.unavailableEndpoints.delete(`${jenkinsName}:${endpoint}`);
   }
 
   private async toJson(response: Response) {
@@ -446,6 +458,7 @@ export class ChecksFetcher implements ChecksProvider {
     if (toolsInfo === null) {
       return [];
     }
+    this.markAvailable(jenkins.name, 'warnings');
     // Fetch all tool issues in parallel — each tool's endpoint is independent.
     const toolResults = await Promise.allSettled(
       toolsInfo.tools.map(async (tool): Promise<CheckRun | null> => {
@@ -546,6 +559,7 @@ export class ChecksFetcher implements ChecksProvider {
     if (testReport === null) {
       return [];
     }
+    this.markAvailable(jenkins.name, 'tests');
     const results: CheckResult[] = [];
 
     const failedTests: CheckResult[] = testReport.suites.flatMap(suite =>
@@ -599,6 +613,7 @@ export class ChecksFetcher implements ChecksProvider {
     if (errorInfo === null) {
       return null;
     }
+    this.markAvailable(jenkins.name, 'error-explanation');
     return errorInfo.explanation;
   }
 
