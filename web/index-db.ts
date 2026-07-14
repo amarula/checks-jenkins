@@ -1,5 +1,6 @@
 /**
- * Copyright 2026 Google LLC
+ * @license
+ * Copyright 2026 Amarula Solutions
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,18 +18,31 @@
 /**
  * Composite Key: [name, changeNumber, patchsetNumber, numberOfRuns]
  */
-export type RequestKey = [name: string, changeNumber: number, patchsetNumber: number, numberOfRuns: number];
+export type RequestKey = [
+  name: string,
+  changeNumber: number,
+  patchsetNumber: number,
+  numberOfRuns: number,
+];
 
 /**
  * Coverage cache key: [jenkinsName, changeNumber, patchsetNumber]
  */
-export type CoverageCacheKey = [name: string, changeNumber: number, patchsetNumber: number];
+export type CoverageCacheKey = [
+  name: string,
+  changeNumber: number,
+  patchsetNumber: number,
+];
 
 /**
  * Runs cache key: [jenkinsName, changeNumber, patchsetNumber]
  * Caches the raw JenkinsCheckRun[] payload for stale-while-revalidate.
  */
-export type RunsCacheKey = [name: string, changeNumber: number, patchsetNumber: number];
+export type RunsCacheKey = [
+  name: string,
+  changeNumber: number,
+  patchsetNumber: number,
+];
 
 type CacheKey = RequestKey | CoverageCacheKey | RunsCacheKey;
 
@@ -55,7 +69,10 @@ export class RequestLRUCache<T> {
   private dbName: string = "GerritRequestDB";
   private db: IDBDatabase | null = null;
 
-  constructor(private capacity: number, private storeName: string) {}
+  constructor(
+    private capacity: number,
+    private storeName: string,
+  ) {}
 
   /**
    * Initializes the database connection and object stores.
@@ -68,11 +85,15 @@ export class RequestLRUCache<T> {
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         if (!db.objectStoreNames.contains("request_store")) {
-          const store = db.createObjectStore("request_store", { keyPath: "key" });
+          const store = db.createObjectStore("request_store", {
+            keyPath: "key",
+          });
           store.createIndex("lastAccessed", "lastAccessed");
         }
         if (!db.objectStoreNames.contains("coverage_store")) {
-          const store = db.createObjectStore("coverage_store", { keyPath: "key" });
+          const store = db.createObjectStore("coverage_store", {
+            keyPath: "key",
+          });
           store.createIndex("lastAccessed", "lastAccessed");
         }
       };
@@ -133,7 +154,8 @@ export class RequestLRUCache<T> {
           if (countReq.result >= this.capacity) {
             const index = store.index("lastAccessed");
             index.openCursor().onsuccess = (ev) => {
-              const lruCursor = (ev.target as IDBRequest<IDBCursorWithValue>).result;
+              const lruCursor = (ev.target as IDBRequest<IDBCursorWithValue>)
+                .result;
               if (lruCursor) lruCursor.delete();
             };
           }
@@ -147,7 +169,7 @@ export class RequestLRUCache<T> {
         const [name, changeNumber, patchsetNumber, runs] = key;
         const range = IDBKeyRange.bound(
           [name, changeNumber, patchsetNumber, 0] as IDBValidKey,
-          [name, changeNumber, patchsetNumber, Infinity] as IDBValidKey
+          [name, changeNumber, patchsetNumber, Infinity] as IDBValidKey,
         );
         const cursorRequest = store.openCursor(range);
 
