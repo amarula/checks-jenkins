@@ -1,5 +1,6 @@
 /**
- * Copyright 2026 Google LLC
+ * @license
+ * Copyright 2026 Amarula Solutions
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +15,7 @@
  * limitations under the License.
  */
 
-import { RequestLRUCache } from './index-db';
+import { RequestLRUCache } from "./index-db";
 
 const CACHE_CAPACITY = 100;
 const COVERAGE_CACHE_CAPACITY = 50;
@@ -25,14 +26,20 @@ class RequestCacheService {
 
   static getFetcherInstance(): RequestLRUCache<any> {
     if (!this.fetcherInstance) {
-      this.fetcherInstance = new RequestLRUCache<any>(CACHE_CAPACITY, "request_store");
+      this.fetcherInstance = new RequestLRUCache<any>(
+        CACHE_CAPACITY,
+        "request_store",
+      );
     }
     return this.fetcherInstance;
   }
 
   static getCoverageInstance(): RequestLRUCache<any> {
     if (!this.coverageInstance) {
-      this.coverageInstance = new RequestLRUCache<any>(COVERAGE_CACHE_CAPACITY, "coverage_store");
+      this.coverageInstance = new RequestLRUCache<any>(
+        COVERAGE_CACHE_CAPACITY,
+        "coverage_store",
+      );
     }
     return this.coverageInstance;
   }
