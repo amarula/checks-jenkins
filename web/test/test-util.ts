@@ -16,16 +16,16 @@
  */
 export function queryAll<E extends Element = Element>(
   el: Element,
-  selector: string
+  selector: string,
 ): NodeListOf<E> {
-  if (!el) throw new Error('element not defined');
+  if (!el) throw new Error("element not defined");
   const root = el.shadowRoot ?? el;
   return root.querySelectorAll<E>(selector);
 }
 
 export function query<E extends Element = Element>(
   el: Element | undefined,
-  selector: string
+  selector: string,
 ): E | undefined {
   if (!el) return undefined;
   const root = el.shadowRoot ?? el;
@@ -34,7 +34,7 @@ export function query<E extends Element = Element>(
 
 export function queryAndAssert<E extends Element = Element>(
   el: Element | undefined,
-  selector: string
+  selector: string,
 ): E {
   const found = query<E>(el, selector);
   if (!found) throw new Error(`selector '${selector}' did not match anything'`);
