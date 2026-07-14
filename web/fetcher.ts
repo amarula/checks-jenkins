@@ -26,10 +26,10 @@ import {
   Category,
   LinkIcon,
   TagColor,
-} from '@gerritcodereview/typescript-api/checks';
-import { PluginApi } from '@gerritcodereview/typescript-api/plugin';
-import { cacheService } from './request-cache-service';
-import { RequestKey, RunsCacheKey } from './index-db';
+} from "@gerritcodereview/typescript-api/checks";
+import { PluginApi } from "@gerritcodereview/typescript-api/plugin";
+import { cacheService } from "./request-cache-service";
+import { RequestKey, RunsCacheKey } from "./index-db";
 
 export declare interface Config {
   name: string;
@@ -124,7 +124,10 @@ export class ChecksFetcher implements ChecksProvider {
   /** Endpoints that returned 403/error — skipped after {@link UNAVAILABLE_RETRY_BUDGET}
    *  consecutive failures within {@link UNAVAILABLE_TTL_MS}.  The counter
    *  resets on the first successful request or when the TTL expires. */
-  private unavailableEndpoints: Map<string, {failures: number, lastFailure: number}> = new Map();
+  private unavailableEndpoints: Map<
+    string,
+    { failures: number; lastFailure: number }
+  > = new Map();
 
   /** RunKeys that the user has clicked rerun on, or that are currently RUNNING/RUNNABLE.
    *  Maps key to the timestamp (Date.now()) when it was added. While non-empty,
@@ -150,8 +153,8 @@ export class ChecksFetcher implements ChecksProvider {
    *  Set by the plugin layer to trigger a UI re-fetch. */
   private onDataChanged: (() => void) | null = null;
 
-  private static readonly TREE_EMOJI = '\u{1F333}';   // 🌳 — has downstream children
-  private static readonly LEAF_EMOJI = '\u{1F343}';   // 🍃 — terminal job
+  private static readonly TREE_EMOJI = "\u{1F333}"; // 🌳 — has downstream children
+  private static readonly LEAF_EMOJI = "\u{1F343}"; // 🍃 — terminal job
 
   constructor(pluginApi: PluginApi, reloadCb?: () => void) {
     this.plugin = pluginApi;
@@ -191,14 +194,15 @@ export class ChecksFetcher implements ChecksProvider {
 
   private async toJson(response: Response) {
     try {
-      if (response.status != undefined) {
+      if (response.status !== undefined) {
         return await response.json();
       } else {
         const val: string = response.toString();
         return JSON.parse(val);
       }
     } catch {
-        return null;
+      // JSON parse failure — return null.
+      return null;
     }
   }
 
@@ -230,11 +234,16 @@ export class ChecksFetcher implements ChecksProvider {
   ): Promise<void> {
     try {
       const response = await networkPromise;
-      if (response == null || (response.status != undefined && response.status === 403)) return;
+      if (
+        response === null ||
+        (response.status !== undefined && response.status === 403)
+      )
+        return;
 
       const data = await this.toJson(response);
-      if (data == null || data._jenkins_unavailable) return;
-      if (!data?.runs || !Array.isArray(data.runs) || data.runs.length === 0) return;
+      if (data === null || data._jenkins_unavailable) return;
+      if (!data?.runs || !Array.isArray(data.runs) || data.runs.length === 0)
+        return;
 
       // Nothing new — skip the cache write and UI reload
       if (this.runsEqual(currentRuns, data.runs)) return;
@@ -242,20 +251,19 @@ export class ChecksFetcher implements ChecksProvider {
       // Deep-clone before caching: computeTreeNames mutates runs in-place and
       // we must not corrupt the cached copy that will be reused on future polls.
       const cloned: JenkinsCheckRun[] = structuredClone(data.runs);
-      await cacheService.put(runsKey, {runs: cloned, timestamp: Date.now()});
+      await cacheService.put(runsKey, { runs: cloned, timestamp: Date.now() });
 
       this.onDataChanged?.();
     } catch {
       // Network flakiness in the background must not surface to the user.
     }
-  }
 
   async fetch(changeData: ChangeData) {
     await this.fetchConfig(changeData)
-      .then(result => {
+      .then((result) => {
         this.configs = result;
       })
-      .catch(reason => {
+      .catch((reason) => {
         throw reason;
       });
 
@@ -273,22 +281,33 @@ export class ChecksFetcher implements ChecksProvider {
       // we check the cache first so we can return stale data immediately.
       const networkPromise = (async () => {
         try {
-          return await this.fetchFromJenkins(jenkins, changeData.repo, checks_url, "GET");
-        } catch (e) {
+          return await this.fetchFromJenkins(
+            jenkins,
+            changeData.repo,
+            checks_url,
+            "GET",
+          );
+        } catch (_e) {
           return null;
         }
       })();
 
-      const runsKey: RunsCacheKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber];
-      const cachedEntry: CachedRuns | undefined = await cacheService.get(runsKey);
+      const runsKey: RunsCacheKey = [
+        jenkins.name,
+        changeData.changeNumber,
+        changeData.patchsetNumber,
+      ];
+      const cachedEntry: CachedRuns | undefined =
+        await cacheService.get(runsKey);
       const now = Date.now();
-      const cacheHit = cachedEntry
-        && cachedEntry.runs
-        && Array.isArray(cachedEntry.runs)
-        && cachedEntry.runs.length > 0
-        && (now - cachedEntry.timestamp) < ChecksFetcher.RUNS_CACHE_TTL_MS;
+      const cacheHit =
+        cachedEntry &&
+        cachedEntry.runs &&
+        Array.isArray(cachedEntry.runs) &&
+        cachedEntry.runs.length > 0 &&
+        now - cachedEntry.timestamp < ChecksFetcher.RUNS_CACHE_TTL_MS;
 
-      let data: any;       // the { runs: JenkinsCheckRun[] } payload we'll process
+      let data: any; // the { runs: JenkinsCheckRun[] } payload we'll process
       let totalRuns: number;
 
       if (cacheHit) {
@@ -298,11 +317,17 @@ export class ChecksFetcher implements ChecksProvider {
         // Clone before computeTreeNames mutates checkName in-place —
         // backgroundUpdateRuns needs the originals for comparison.
         this.backgroundUpdateRuns(
-          networkPromise, runsKey, structuredClone(cachedEntry!.runs));
+          networkPromise,
+          runsKey,
+          structuredClone(cachedEntry!.runs),
+        );
       } else {
         // No usable cache — must await the network.
         const response = await networkPromise;
-        if (response == null || (response.status != undefined && response.status === 403)) {
+        if (
+          response === null ||
+          (response.status !== undefined && response.status === 403)
+        ) {
           // Give the user a LOGIN button that will open a new tab where they can log into Jenkins
           return {
             responseCode: ResponseCode.NOT_LOGGED_IN,
@@ -310,20 +335,20 @@ export class ChecksFetcher implements ChecksProvider {
           };
         }
         data = await this.toJson(response);
-        if (data != null && data._jenkins_unavailable) {
+        if (data !== null && data !== undefined && data._jenkins_unavailable) {
           return {
             responseCode: ResponseCode.NOT_LOGGED_IN,
             loginCallback: () => window.open(jenkins.url),
           };
         }
-        if (data == null) {
+        if (data === null) {
           continue;
         }
         if (!data?.runs || !Array.isArray(data.runs)) {
           continue;
         }
         totalRuns = data.runs.length;
-        if (totalRuns == 0) {
+        if (totalRuns === 0) {
           continue;
         }
 
@@ -337,45 +362,80 @@ export class ChecksFetcher implements ChecksProvider {
       // carries the depth and emoji prefix for all downstream consumers.
       this.computeTreeNames(data.runs);
 
-      const key: RequestKey = [jenkins.name, changeData.changeNumber, changeData.patchsetNumber, totalRuns]
+      const key: RequestKey = [
+        jenkins.name,
+        changeData.changeNumber,
+        changeData.patchsetNumber,
+        totalRuns,
+      ];
 
       // Phase A: Enrich error results with explanations (parallel across runs).
       // Skip entirely if the endpoint was already marked unavailable on a prior poll.
-      const completedRuns = data.runs.filter((run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED);
-      if (!this.isUnavailable(jenkins.name, 'error-explanation')) {
-        await Promise.all(completedRuns.map(async (run: JenkinsCheckRun) => {
-          if (!run.results) run.results = [];
-          const errorResult = run.results.find((result: CheckResult) => result.category === Category.ERROR);
-          if (!errorResult) return;
-          const errorMessage = await this.explainBuildFailure(jenkins, changeData, run.statusLink);
-          if (errorMessage) {
-            const lines = errorMessage.split('\n');
-            const parsedSummary = lines[0].trim();
-            const detailedMessage = lines.slice(1).join('\n').trim();
-            const markdownMessage = detailedMessage
-              ? `\`\`\`text\n${detailedMessage}\n\`\`\``
-              : 'No additional details provided.';
-            errorResult.summary = parsedSummary;
-            errorResult.message = markdownMessage;
-            run.statusDescription = parsedSummary;
-          }
-        }));
+      const completedRuns = data.runs.filter(
+        (run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED,
+      );
+      if (!this.isUnavailable(jenkins.name, "error-explanation")) {
+        await Promise.all(
+          completedRuns.map(async (run: JenkinsCheckRun) => {
+            if (!run.results) run.results = [];
+            const errorResult = run.results.find(
+              (result: CheckResult) => result.category === Category.ERROR,
+            );
+            if (!errorResult) return;
+            const errorMessage = await this.explainBuildFailure(
+              jenkins,
+              changeData,
+              run.statusLink,
+            );
+            if (errorMessage) {
+              const lines = errorMessage.split("\n");
+              const parsedSummary = lines[0].trim();
+              const detailedMessage = lines.slice(1).join("\n").trim();
+              const markdownMessage = detailedMessage
+                ? `\`\`\`text\n${detailedMessage}\n\`\`\``
+                : "No additional details provided.";
+              errorResult.summary = parsedSummary;
+              errorResult.message = markdownMessage;
+              run.statusDescription = parsedSummary;
+            }
+          }),
+        );
       }
 
       // Phase B: Fetch warnings + test results (parallel across runs and both types).
       // Skip endpoints that were already marked unavailable on a prior poll.
       const cachedData: CheckRun[] = await cacheService.get(key);
-      if (cachedData === null || cachedData === undefined || cachedData.length == 0) {
-        const enrichmentPromises = completedRuns.flatMap((run: JenkinsCheckRun) => {
-          const promises: Promise<CheckRun[] | null>[] = [];
-          if (!this.isUnavailable(jenkins.name, 'warnings')) {
-            promises.push(this.buildWarnings(jenkins, changeData, run.statusLink, run.attempt));
-          }
-          if (!this.isUnavailable(jenkins.name, 'tests')) {
-            promises.push(this.buildTestResults(jenkins, changeData, run.statusLink, run.attempt));
-          }
-          return promises;
-        });
+      if (
+        cachedData === null ||
+        cachedData === undefined ||
+        cachedData.length === 0
+      ) {
+        const enrichmentPromises = completedRuns.flatMap(
+          (run: JenkinsCheckRun) => {
+            const promises: Promise<CheckRun[] | null>[] = [];
+            if (!this.isUnavailable(jenkins.name, "warnings")) {
+              promises.push(
+                this.buildWarnings(
+                  jenkins,
+                  changeData,
+                  run.statusLink,
+                  run.attempt,
+                ),
+              );
+            }
+            if (!this.isUnavailable(jenkins.name, "tests")) {
+              promises.push(
+                this.buildTestResults(
+                  jenkins,
+                  changeData,
+                  run.statusLink,
+                  run.attempt,
+                ),
+              );
+            }
+            return promises;
+          },
+        );
         const results = await Promise.all(enrichmentPromises);
         const warningsData = results.flat().filter(Boolean);
         if (warningsData.length > 0) {
@@ -392,8 +452,11 @@ export class ChecksFetcher implements ChecksProvider {
       //    (Jenkins may not have queued the job yet) via a TTL.
       //  - Keys whose TTL has expired with no active run are removed.
       for (const run of data.runs) {
-        if (run.status === RunStatus.RUNNING || run.status === RunStatus.RUNNABLE) {
-          const {runKey} = this.parseExternalId(run.externalId);
+        if (
+          run.status === RunStatus.RUNNING ||
+          run.status === RunStatus.RUNNABLE
+        ) {
+          const { runKey } = this.parseExternalId(run.externalId);
           if (runKey) this.triggeredReruns.set(runKey, now);
         }
       }
@@ -453,19 +516,32 @@ export class ChecksFetcher implements ChecksProvider {
     return TagColor.GRAY;
   }
 
-  async buildWarnings(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
-    if (this.isUnavailable(jenkins.name, 'warnings')) return null;
+  async buildWarnings(
+    jenkins: Config,
+    changeData: ChangeData,
+    statusLink: string,
+    attempt: number,
+  ) {
+    if (this.isUnavailable(jenkins.name, "warnings")) return null;
 
     const toolsResult = await (async () => {
       try {
-        return await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}warnings-ng/api/json`, "GET");
+        return await this.fetchFromJenkins(
+          jenkins,
+          changeData.repo,
+          `${statusLink}warnings-ng/api/json`,
+          "GET",
+        );
       } catch (e) {
         return null;
       }
     })();
 
-    if (toolsResult === null || (toolsResult.ok != undefined && !toolsResult.ok)) {
-      this.markUnavailable(jenkins.name, 'warnings');
+    if (
+      toolsResult === null ||
+      (toolsResult.ok !== undefined && !toolsResult.ok)
+    ) {
+      this.markUnavailable(jenkins.name, "warnings");
       return null;
     }
 
@@ -473,20 +549,24 @@ export class ChecksFetcher implements ChecksProvider {
     if (toolsInfo === null) {
       return [];
     }
-    this.markAvailable(jenkins.name, 'warnings');
+    this.markAvailable(jenkins.name, "warnings");
     // Fetch all tool issues in parallel — each tool's endpoint is independent.
     const toolResults = await Promise.allSettled(
       toolsInfo.tools.map(async (tool): Promise<CheckRun | null> => {
         const toolResp = await (async () => {
           try {
-            return await this.fetchFromJenkins(jenkins, changeData.repo,
-              `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`, "GET");
+            return await this.fetchFromJenkins(
+              jenkins,
+              changeData.repo,
+              `${statusLink}${tool.id}/all/api/json?tree=issues[severity,message,toString,fileName,lineStart,columnStart,lineEnd,columnEnd]`,
+              "GET",
+            );
           } catch (e) {
             return null;
           }
         })();
 
-        if (toolResp === null || (toolResp.ok != undefined && !toolResp.ok)) {
+        if (toolResp === null || (toolResp.ok !== undefined && !toolResp.ok)) {
           return null;
         }
 
@@ -503,48 +583,62 @@ export class ChecksFetcher implements ChecksProvider {
           statusLink: `${tool.latestUrl}`,
           attempt: attempt,
           actions: [],
-          results: warnings.issues.map(issue => ({
+          results: warnings.issues.map((issue) => ({
             show_on_unchanged_lines: false,
             category: this.warningNgGetCategory(tool),
             summary: issue.message,
             message: issue.toString,
-            tags: [{
-              name: `${tool.name}`,
-              color: this.warningNgGetTagColor(issue),
-              tooltip: issue.message
-            }],
-            links: [{
-              url: `${tool.latestUrl}`,
-              icon: LinkIcon.EXTERNAL,
-              primary: true,
-            }],
-            codePointers: [{
-              path: issue.fileName,
-              range: {
-                start_line: issue.lineStart,
-                start_character: issue.columnStart - 1,
-                end_line: issue.lineEnd,
-                end_character: issue.columnEnd
-              }
-            }]
+            tags: [
+              {
+                name: `${tool.name}`,
+                color: this.warningNgGetTagColor(issue),
+                tooltip: issue.message,
+              },
+            ],
+            links: [
+              {
+                url: `${tool.latestUrl}`,
+                icon: LinkIcon.EXTERNAL,
+                primary: true,
+              },
+            ],
+            codePointers: [
+              {
+                path: issue.fileName,
+                range: {
+                  start_line: issue.lineStart,
+                  start_character: issue.columnStart - 1,
+                  end_line: issue.lineEnd,
+                  end_character: issue.columnEnd,
+                },
+              },
+            ],
           })),
         };
-      })
+      }),
     );
 
     return toolResults
-      .filter((r): r is PromiseFulfilledResult<CheckRun> => r.status === 'fulfilled' && r.value !== null)
-      .map(r => r.value);
+      .filter(
+        (r): r is PromiseFulfilledResult<CheckRun> =>
+          r.status === "fulfilled" && r.value !== null,
+      )
+      .map((r) => r.value);
   }
 
-  async buildTestResults(jenkins: Config, changeData: ChangeData, statusLink: string, attempt: number) {
-    if (this.isUnavailable(jenkins.name, 'tests')) return null;
+  async buildTestResults(
+    jenkins: Config,
+    changeData: ChangeData,
+    statusLink: string,
+    attempt: number,
+  ) {
+    if (this.isUnavailable(jenkins.name, "tests")) return null;
 
     interface TestCase {
       className: string;
       errorDetails: string | null;
       name: string;
-      status: 'PASSED' | 'FAILED' | 'SKIPPED';
+      status: "PASSED" | "FAILED" | "SKIPPED";
     }
 
     interface TestSuite {
@@ -558,15 +652,19 @@ export class ChecksFetcher implements ChecksProvider {
 
     const testResult = await (async () => {
       try {
-        return await this.fetchFromJenkins(jenkins, changeData.repo,
-          `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`, "GET");
+        return await this.fetchFromJenkins(
+          jenkins,
+          changeData.repo,
+          `${statusLink}testReport/api/json?tree=suites[cases[className,name,status,errorDetails]]`,
+          "GET",
+        );
       } catch (e) {
         return null;
       }
     })();
 
-    if (testResult === null || (testResult.ok != undefined && !testResult.ok)) {
-      this.markUnavailable(jenkins.name, 'tests');
+    if (testResult === null || (testResult.ok !== undefined && !testResult.ok)) {
+      this.markUnavailable(jenkins.name, "tests");
       return null;
     }
 
@@ -574,18 +672,18 @@ export class ChecksFetcher implements ChecksProvider {
     if (testReport === null) {
       return [];
     }
-    this.markAvailable(jenkins.name, 'tests');
+    this.markAvailable(jenkins.name, "tests");
     const results: CheckResult[] = [];
 
-    const failedTests: CheckResult[] = testReport.suites.flatMap(suite =>
+    const failedTests: CheckResult[] = testReport.suites.flatMap((suite) =>
       suite.cases
-        .filter(test => test.status === 'FAILED')
-        .map(test => ({
+        .filter((test) => test.status === "FAILED")
+        .map((test) => ({
           show_on_unchanged_lines: false,
           category: Category.ERROR,
           message: test.errorDetails ?? undefined,
-          summary: `${test.className}.${test.name}`
-        }))
+          summary: `${test.className}.${test.name}`,
+        })),
     );
 
     if (!failedTests.length) {
@@ -603,24 +701,36 @@ export class ChecksFetcher implements ChecksProvider {
       attempt: attempt,
       actions: [],
       results: results,
-    })
+    });
 
     return checkRuns;
   }
 
-  async explainBuildFailure(jenkins: Config, changeData: ChangeData, statusLink: string) {
-    if (this.isUnavailable(jenkins.name, 'error-explanation')) return null;
+  async explainBuildFailure(
+    jenkins: Config,
+    changeData: ChangeData,
+    statusLink: string,
+  ) {
+    if (this.isUnavailable(jenkins.name, "error-explanation")) return null;
 
     const errorResult = await (async () => {
       try {
-        return await this.fetchFromJenkins(jenkins, changeData.repo, `${statusLink}error-explanation/api/json`, "GET");
+        return await this.fetchFromJenkins(
+          jenkins,
+          changeData.repo,
+          `${statusLink}error-explanation/api/json`,
+          "GET",
+        );
       } catch (e) {
         return null;
       }
     })();
 
-    if (errorResult === null || (errorResult.ok != undefined && !errorResult.ok)) {
-      this.markUnavailable(jenkins.name, 'error-explanation');
+    if (
+      errorResult === null ||
+      (errorResult.ok !== undefined && !errorResult.ok)
+    ) {
+      this.markUnavailable(jenkins.name, "error-explanation");
       return null;
     }
 
@@ -628,7 +738,7 @@ export class ChecksFetcher implements ChecksProvider {
     if (errorInfo === null) {
       return null;
     }
-    this.markAvailable(jenkins.name, 'error-explanation');
+    this.markAvailable(jenkins.name, "error-explanation");
     return errorInfo.explanation;
   }
 
@@ -637,7 +747,7 @@ export class ChecksFetcher implements ChecksProvider {
     return this.plugin
       .restApi()
       .get<Config[]>(
-        `/projects/${encodeURIComponent(changeData.repo)}/${pluginName}~config`
+        `/projects/${encodeURIComponent(changeData.repo)}/${pluginName}~config`,
       );
   }
 
@@ -660,15 +770,16 @@ export class ChecksFetcher implements ChecksProvider {
       statusLink: run.statusLink,
     };
     const actions: Action[] = [];
-    const {runKey} = this.parseExternalId(run.externalId);
+    const { runKey } = this.parseExternalId(run.externalId);
     const rerunDisabled = runKey
       ? this.triggeredReruns.has(runKey) || this.triggeredReruns.size > 0
       : this.triggeredReruns.size > 0;
-    const rerunTooltip = runKey && this.triggeredReruns.has(runKey)
-      ? 'Run already triggered'
-      : this.triggeredReruns.size > 0
-        ? 'A pipeline job is currently running'
-        : undefined;
+    const rerunTooltip =
+      runKey && this.triggeredReruns.has(runKey)
+        ? "Run already triggered"
+        : this.triggeredReruns.size > 0
+          ? "A pipeline job is currently running"
+          : undefined;
     for (const action of run.actions) {
       actions.push({
         name: action.name,
@@ -676,7 +787,8 @@ export class ChecksFetcher implements ChecksProvider {
         primary: action.primary,
         summary: action.summary,
         disabled: action.disabled || rerunDisabled,
-        callback: () => this.rerun(jenkins, repo, action.url + "/index", runKey),
+        callback: () =>
+          this.rerun(jenkins, repo, action.url + "/index", runKey),
       });
     }
     convertedRun.actions = actions;
@@ -689,15 +801,21 @@ export class ChecksFetcher implements ChecksProvider {
    * Downstream runs carry a JSON object: {"parent":"upstreamJob#N","run":"thisJob#M"}.
    * Direct runs are plain strings: "jobFullName#buildNumber".
    */
-  private parseExternalId(externalId: string | undefined): {runKey: string; parentKey: string | null} {
-    if (!externalId) return {runKey: '', parentKey: null};
+  private parseExternalId(externalId: string | undefined): {
+    runKey: string;
+    parentKey: string | null;
+  } {
+    if (!externalId) return { runKey: "", parentKey: null };
     try {
       const parsed = JSON.parse(externalId);
       if (parsed.parent && parsed.run) {
-        return {runKey: parsed.run as string, parentKey: parsed.parent as string};
+        return {
+          runKey: parsed.run as string,
+          parentKey: parsed.parent as string,
+        };
       }
     } catch {}
-    return {runKey: externalId, parentKey: null};
+    return { runKey: externalId, parentKey: null };
   }
 
   /**
@@ -720,10 +838,10 @@ export class ChecksFetcher implements ChecksProvider {
     if (!runs || runs.length === 0) return;
 
     // 1. Parse every externalId
-    const parsed = runs.map(r => this.parseExternalId(r.externalId));
+    const parsed = runs.map((r) => this.parseExternalId(r.externalId));
 
     // 2. Build lookup structures
-    const parentMap = new Map<string, string | null>();  // runKey → parentKey
+    const parentMap = new Map<string, string | null>(); // runKey → parentKey
     const allKeys = new Set<string>();
     for (const p of parsed) {
       if (p.runKey) {
@@ -797,18 +915,23 @@ export class ChecksFetcher implements ChecksProvider {
     // 8. Apply the new checkName only to runs that are part of the tree.
     //    Runs without a valid externalId or outside the graph keep their
     //    original name.
-    interface RunMeta { depth: number; treeIndex: number; }
+    interface RunMeta {
+      depth: number;
+      treeIndex: number;
+    }
     const runMeta = new Map<JenkinsCheckRun, RunMeta>();
     for (let i = 0; i < runs.length; i++) {
-      const {runKey} = parsed[i];
+      const { runKey } = parsed[i];
       if (!runKey || !inGraph.has(runKey)) continue;
       const meta: RunMeta = {
         depth: computeDepth(runKey),
         treeIndex: treeIndex.get(findRoot(runKey))!,
       };
       runMeta.set(runs[i], meta);
-      const level = String(meta.depth + 1).padStart(2, '0');
-      const emoji = hasChildren.has(runKey) ? ChecksFetcher.TREE_EMOJI : ChecksFetcher.LEAF_EMOJI;
+      const level = String(meta.depth + 1).padStart(2, "0");
+      const emoji = hasChildren.has(runKey)
+        ? ChecksFetcher.TREE_EMOJI
+        : ChecksFetcher.LEAF_EMOJI;
       runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
     }
 
@@ -825,9 +948,14 @@ export class ChecksFetcher implements ChecksProvider {
     });
   }
 
-  private fetchFromJenkins(jenkins: Config, repo: string, url: string, method: string): Promise<Response> {
+  private fetchFromJenkins(
+    jenkins: Config,
+    repo: string,
+    url: string,
+    method: string,
+  ): Promise<Response> {
     if (!jenkins.user) {
-      const options: RequestInit = { credentials: 'include' };
+      const options: RequestInit = { credentials: "include" };
       return fetch(url, options);
     }
 
@@ -839,29 +967,36 @@ export class ChecksFetcher implements ChecksProvider {
       urlpath: encodeURI(extractPath),
       method: method,
     };
-    return this.plugin.restApi().post(
-      `/projects/${encodeURIComponent(repo)}/${pluginName}~proxy-trigger`,
-      payload
-    );
+    return this.plugin
+      .restApi()
+      .post(
+        `/projects/${encodeURIComponent(repo)}/${pluginName}~proxy-trigger`,
+        payload,
+      );
   }
 
-  private rerun(jenkins: Config, repo: string, url: string, runKey: string): Promise<ActionResult> {
+  private rerun(
+    jenkins: Config,
+    repo: string,
+    url: string,
+    runKey: string,
+  ): Promise<ActionResult> {
     if (runKey) this.triggeredReruns.set(runKey, Date.now());
     return this.fetchFromJenkins(jenkins, repo, url, "POST")
-      .then(_ => {
+      .then((_) => {
         return {
-          message: 'Run triggered.',
+          message: "Run triggered.",
           shouldReload: true,
         };
       })
-      .catch(e => {
+      .catch((e) => {
         const msg: string = e.message;
         /* Redirect that is not to be considered as error */
-        if (msg.includes('302')) {
+        if (msg.includes("302")) {
           return {
-            message: 'Run triggered.',
+            message: "Run triggered.",
             shouldReload: true,
-          }
+          };
         }
         return { message: `Triggering the run failed: ${e.message}` };
       });
