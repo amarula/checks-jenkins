@@ -1,0 +1,13 @@
+services:
+  gerrit-plugin-builder:
+    build:
+      context: ./
+      args:
+         USERNAME: jenkins
+         UID: 20000
+         GID: 20000
+    privileged: true
+    stdin_open: true
+    tty: true
+    image: registry.amarulasolutions.com:443/gerrit-plugin-builder:1.0
+    container_name: gerrit-plugin-builder

@@ -68,3 +68,28 @@ web_test_runner(
 
 # Creates lint_test and lint_bin rules.
 plugin_eslint()
+
+# ── Test wrappers ────────────────────────────────────────────────────
+#
+# Gerrit's web_test_runner macro and plugin_eslint() produce sh_binary
+# targets, which bazel test does not discover.  We wrap each one in a
+# thin sh_test so that bazel test //plugins/checks-jenkins/... picks
+# them up.  run_tests.sh resolves the binary via its rlocationpath in
+# the Bazel runfiles tree and delegates to it.
+#
+# $(rlocationpath) includes the workspace name (_main) prefix so the
+# path resolves correctly at test time; $(rootpath) strips it.
+
+sh_test(
+    name = "web_tests",
+    srcs = ["run_tests.sh"],
+    args = ["$(rlocationpath :web_test_runner)"],
+    data = [":web_test_runner"],
+)
+
+sh_test(
+    name = "web_lint",
+    srcs = ["run_tests.sh"],
+    args = ["$(rlocationpath :lint_bin)"],
+    data = [":lint_bin"],
+)
