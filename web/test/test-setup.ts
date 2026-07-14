@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import '@gerritcodereview/typescript-api/gerrit';
-import {css} from 'lit';
+import "@gerritcodereview/typescript-api/gerrit";
+import { css } from "lit";
 
 window.Gerrit = {
   install: () => {},
