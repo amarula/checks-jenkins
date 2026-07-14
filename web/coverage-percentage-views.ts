@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-import {css, html, LitElement, PropertyValues} from 'lit';
-import {customElement, property} from 'lit/decorators.js';
-import {PercentageData, coverageEmoji} from './coverage';
+import { css, html, LitElement, PropertyValues } from "lit";
+import { customElement, property } from "lit/decorators.js";
+import { PercentageData, coverageEmoji } from "./coverage";
 
 const COMMON_CSS = css`
   :host {
@@ -56,11 +56,15 @@ export class BaseComponent extends LitElement {
   }
 
   override render() {
-    return html`<div class="${this.computeCoverageClass()}"><slot></slot></div>`;
+    return html`<div class="${this.computeCoverageClass()}">
+      <slot></slot>
+    </div>`;
   }
 
   protected computeCoverageClass(): string {
-    return this.shown ? 'coverage-percentage-column' : 'coverage-percentage-column hidden';
+    return this.shown
+      ? "coverage-percentage-column"
+      : "coverage-percentage-column hidden";
   }
 }
 
@@ -72,7 +76,7 @@ declare interface CoverageProvider {
   (
     changeNum: string,
     path: string,
-    patchNum: string
+    patchNum: string,
   ): Promise<PercentageData | null>;
 }
 
@@ -80,36 +84,36 @@ declare interface CoverageProvider {
  * Base Coverage Class used for all elements that have data values.
  */
 export class BaseCoverageComponent extends BaseComponent {
-  @property() changeNum = '';
+  @property() changeNum = "";
 
   @property() patchRange: PatchRange | null = null;
 
-  @property() path = '';
+  @property() path = "";
 
   @property() provider: CoverageProvider = async (
     _changeNum: string,
     _path: string,
-    _patchNum: string
+    _patchNum: string,
   ) => null;
 
-  @property() percentageText = '-';
+  @property() percentageText = "-";
 
   @property() percentageValue: number | undefined = undefined;
 
-  @property() kind = '';
+  @property() kind = "";
 
   override update(changedProperties: PropertyValues) {
     if (
-      changedProperties.has('changeNum') ||
-      changedProperties.has('patchRange') ||
-      changedProperties.has('path') ||
-      changedProperties.has('provider')
+      changedProperties.has("changeNum") ||
+      changedProperties.has("patchRange") ||
+      changedProperties.has("path") ||
+      changedProperties.has("provider")
     ) {
-      this.computePercentage(
+      void this.computePercentage(
         this.changeNum,
         this.patchRange,
         this.path,
-        this.provider
+        this.provider,
       );
     }
     super.update(changedProperties);
@@ -123,10 +127,10 @@ export class BaseCoverageComponent extends BaseComponent {
     changeNum: string,
     patchRange: PatchRange | null,
     path: string,
-    provider: CoverageProvider
+    provider: CoverageProvider,
   ) {
     if (!changeNum || !patchRange || !path) {
-      this.percentageText = '-';
+      this.percentageText = "-";
       this.percentageValue = undefined;
       return;
     }
@@ -136,9 +140,9 @@ export class BaseCoverageComponent extends BaseComponent {
       if (p && Number.isFinite(this.getPercentageFromData(p))) {
         const raw = this.getPercentageFromData(p)!;
         this.percentageValue = raw;
-        this.percentageText = raw.toString() + '%';
+        this.percentageText = raw.toString() + "%";
       } else {
-        this.percentageText = '-';
+        this.percentageText = "-";
         this.percentageValue = undefined;
       }
     }
@@ -148,7 +152,7 @@ export class BaseCoverageComponent extends BaseComponent {
 /**
  * Component for absolute coverage header.
  */
-@customElement('absolute-header-view')
+@customElement("absolute-header-view")
 export class AbsoluteHeaderView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -167,7 +171,7 @@ export class AbsoluteHeaderView extends BaseComponent {
 /**
  * Component for incremental coverage header.
  */
-@customElement('incremental-header-view')
+@customElement("incremental-header-view")
 export class IncrementalHeaderView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -186,13 +190,13 @@ export class IncrementalHeaderView extends BaseComponent {
 /**
  * Component for absolute coverage data.
  */
-@customElement('absolute-content-view')
+@customElement("absolute-content-view")
 export class AbsoluteContentView extends BaseCoverageComponent {
   static override styles = COMMON_CSS;
 
   constructor() {
     super();
-    this.kind = 'absolute';
+    this.kind = "absolute";
   }
 
   override getPercentageFromData(pd: PercentageData): number | undefined {
@@ -201,7 +205,9 @@ export class AbsoluteContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">
+        ${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? " " : ""}${this.percentageText}
+      </div>
     `;
   }
 }
@@ -209,13 +215,13 @@ export class AbsoluteContentView extends BaseCoverageComponent {
 /**
  * Component for incremental coverage data.
  */
-@customElement('incremental-content-view')
+@customElement("incremental-content-view")
 export class IncrementalContentView extends BaseCoverageComponent {
   static override styles = COMMON_CSS;
 
   constructor() {
     super();
-    this.kind = 'incremental';
+    this.kind = "incremental";
   }
 
   override getPercentageFromData(pd: PercentageData): number | undefined {
@@ -224,7 +230,9 @@ export class IncrementalContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">
+        ${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? " " : ""}${this.percentageText}
+      </div>
     `;
   }
 }
@@ -232,7 +240,7 @@ export class IncrementalContentView extends BaseCoverageComponent {
 /**
  * Component for absolute summary.
  */
-@customElement('absolute-summary-view')
+@customElement("absolute-summary-view")
 export class AbsoluteSummaryView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -244,7 +252,7 @@ export class AbsoluteSummaryView extends BaseComponent {
 /**
  * Component for incremental summary.
  */
-@customElement('incremental-summary-view')
+@customElement("incremental-summary-view")
 export class IncrementalSummaryView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -256,7 +264,7 @@ export class IncrementalSummaryView extends BaseComponent {
 /**
  * Component for absolute unit tests header.
  */
-@customElement('absolute-unit-tests-header-view')
+@customElement("absolute-unit-tests-header-view")
 export class AbsoluteUnitTestsHeaderView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -275,7 +283,7 @@ export class AbsoluteUnitTestsHeaderView extends BaseComponent {
 /**
  * Component for incremental unit tests header.
  */
-@customElement('incremental-unit-tests-header-view')
+@customElement("incremental-unit-tests-header-view")
 export class IncrementalUnitTestsHeaderView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -294,13 +302,13 @@ export class IncrementalUnitTestsHeaderView extends BaseComponent {
 /**
  * Component for absolute unit tests data.
  */
-@customElement('absolute-unit-tests-content-view')
+@customElement("absolute-unit-tests-content-view")
 export class AbsoluteUnitTestsContentView extends BaseCoverageComponent {
   static override styles = COMMON_CSS;
 
   constructor() {
     super();
-    this.kind = 'absolute_unit_tests';
+    this.kind = "absolute_unit_tests";
   }
 
   override getPercentageFromData(pd: PercentageData) {
@@ -309,7 +317,9 @@ export class AbsoluteUnitTestsContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">
+        ${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? " " : ""}${this.percentageText}
+      </div>
     `;
   }
 }
@@ -317,13 +327,13 @@ export class AbsoluteUnitTestsContentView extends BaseCoverageComponent {
 /**
  * Component for incremental unit tests data.
  */
-@customElement('incremental-unit-tests-content-view')
+@customElement("incremental-unit-tests-content-view")
 export class IncrementalUnitTestsContentView extends BaseCoverageComponent {
   static override styles = COMMON_CSS;
 
   constructor() {
     super();
-    this.kind = 'incremental_unit_tests';
+    this.kind = "incremental_unit_tests";
   }
 
   override getPercentageFromData(pd: PercentageData) {
@@ -332,7 +342,9 @@ export class IncrementalUnitTestsContentView extends BaseCoverageComponent {
 
   override render() {
     return html`
-      <div class="${this.computeCoverageClass()}">${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? ' ' : ''}${this.percentageText}</div>
+      <div class="${this.computeCoverageClass()}">
+        ${coverageEmoji(this.percentageValue)}${this.percentageValue !== undefined ? " " : ""}${this.percentageText}
+      </div>
     `;
   }
 }
@@ -340,7 +352,7 @@ export class IncrementalUnitTestsContentView extends BaseCoverageComponent {
 /**
  * Component for absolute unit tests summary.
  */
-@customElement('absolute-unit-tests-summary-view')
+@customElement("absolute-unit-tests-summary-view")
 export class AbsoluteUnitTestsSummaryView extends BaseComponent {
   static override styles = COMMON_CSS;
 
@@ -352,7 +364,7 @@ export class AbsoluteUnitTestsSummaryView extends BaseComponent {
 /**
  * Component for incremental unit tests summary.
  */
-@customElement('incremental-unit-tests-summary-view')
+@customElement("incremental-unit-tests-summary-view")
 export class IncrementalUnitTestsSummaryView extends BaseComponent {
   static override styles = COMMON_CSS;
 
