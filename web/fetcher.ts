@@ -122,8 +122,9 @@ export class ChecksFetcher implements ChecksProvider {
   configs: Config[] | null;
 
   /** Endpoints that returned 403/error — skipped after {@link UNAVAILABLE_RETRY_BUDGET}
-   *  consecutive failures.  The counter resets on the first successful request. */
-  private unavailableEndpoints: Map<string, number> = new Map();
+   *  consecutive failures within {@link UNAVAILABLE_TTL_MS}.  The counter
+   *  resets on the first successful request or when the TTL expires. */
+  private unavailableEndpoints: Map<string, {failures: number, lastFailure: number}> = new Map();
 
   /** RunKeys that the user has clicked rerun on, or that are currently RUNNING/RUNNABLE.
    *  Maps key to the timestamp (Date.now()) when it was added. While non-empty,
@@ -137,6 +138,10 @@ export class ChecksFetcher implements ChecksProvider {
   /** Number of consecutive failures before an enrichment endpoint is
    *  considered unavailable and skipped on future polls. */
   private static readonly UNAVAILABLE_RETRY_BUDGET = 2;
+
+  /** Maximum time (ms) an endpoint stays marked unavailable before the
+   *  failure counter is cleared and the endpoint is retried. */
+  private static readonly UNAVAILABLE_TTL_MS = 2 * 60 * 1000; // 2 min
 
   /** Maximum age (ms) for cached runs before forcing a network refresh. */
   private static readonly RUNS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
@@ -161,12 +166,22 @@ export class ChecksFetcher implements ChecksProvider {
 
   private isUnavailable(jenkinsName: string, endpoint: string): boolean {
     const key = `${jenkinsName}:${endpoint}`;
-    return (this.unavailableEndpoints.get(key) ?? 0) >= ChecksFetcher.UNAVAILABLE_RETRY_BUDGET;
+    const entry = this.unavailableEndpoints.get(key);
+    if (!entry) return false;
+    if (Date.now() - entry.lastFailure > ChecksFetcher.UNAVAILABLE_TTL_MS) {
+      this.unavailableEndpoints.delete(key);
+      return false;
+    }
+    return entry.failures >= ChecksFetcher.UNAVAILABLE_RETRY_BUDGET;
   }
 
   private markUnavailable(jenkinsName: string, endpoint: string): void {
     const key = `${jenkinsName}:${endpoint}`;
-    this.unavailableEndpoints.set(key, (this.unavailableEndpoints.get(key) ?? 0) + 1);
+    const entry = this.unavailableEndpoints.get(key);
+    this.unavailableEndpoints.set(key, {
+      failures: (entry?.failures ?? 0) + 1,
+      lastFailure: Date.now(),
+    });
   }
 
   /** Reset the failure counter when an endpoint responds successfully. */
