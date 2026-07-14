@@ -14,148 +14,142 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import './test/test-setup';
-import './coverage-percentage-views';
-import {assert, fixture, html} from '@open-wc/testing';
+import "./test/test-setup";
+import "./coverage-percentage-views";
+import { assert, fixture, html } from "@open-wc/testing";
 import {
   BaseComponent,
   AbsoluteHeaderView,
   IncrementalHeaderView,
   AbsoluteContentView,
   IncrementalContentView,
-} from './coverage-percentage-views';
-import {query} from './test/test-util';
+} from "./coverage-percentage-views";
+import { query } from "./test/test-util";
 
-suite('BaseComponent.instances tracking', () => {
-  test('instances set is initially empty', () => {
+suite("BaseComponent.instances tracking", () => {
+  test("instances set is initially empty", () => {
     assert.equal(BaseComponent.instances.size, 0);
   });
 
-  test('registers instance on connectedCallback', async () => {
+  test("registers instance on connectedCallback", async () => {
     const el = await fixture<AbsoluteHeaderView>(
-      html`<absolute-header-view></absolute-header-view>`
+      html`<absolute-header-view></absolute-header-view>`,
     );
     assert.isTrue(BaseComponent.instances.has(el));
     BaseComponent.instances.delete(el);
   });
 
-  test('unregisters instance on disconnectedCallback', async () => {
+  test("unregisters instance on disconnectedCallback", async () => {
     const el = await fixture<AbsoluteHeaderView>(
-      html`<absolute-header-view></absolute-header-view>`
+      html`<absolute-header-view></absolute-header-view>`,
     );
     assert.isTrue(BaseComponent.instances.has(el));
     el.remove();
     assert.isFalse(BaseComponent.instances.has(el));
   });
 
-  test('shown defaults to true', async () => {
+  test("shown defaults to true", async () => {
     const el = await fixture<AbsoluteHeaderView>(
-      html`<absolute-header-view></absolute-header-view>`
+      html`<absolute-header-view></absolute-header-view>`,
     );
     assert.isTrue(el.shown);
     BaseComponent.instances.delete(el);
   });
 });
 
-suite('AbsoluteHeaderView', () => {
-  test('renders Cov text', async () => {
+suite("AbsoluteHeaderView", () => {
+  test("renders Cov text", async () => {
     const el = await fixture<AbsoluteHeaderView>(
-      html`<absolute-header-view></absolute-header-view>`
+      html`<absolute-header-view></absolute-header-view>`,
     );
-    const div = query(el, '.coverage-percentage-column');
+    const div = query(el, ".coverage-percentage-column");
     assert.isDefined(div);
-    assert.include(div!.textContent!, 'Cov');
+    assert.include(div!.textContent!, "Cov");
     BaseComponent.instances.delete(el);
   });
 
-  test('adds hidden class when shown is false', async () => {
+  test("adds hidden class when shown is false", async () => {
     const el = await fixture<AbsoluteHeaderView>(
-      html`<absolute-header-view .shown=${false}></absolute-header-view>`
+      html`<absolute-header-view .shown=${false}></absolute-header-view>`,
     );
-    const div = query(el, '.coverage-percentage-column.hidden');
+    const div = query(el, ".coverage-percentage-column.hidden");
     assert.isDefined(div);
     BaseComponent.instances.delete(el);
   });
 
-  test('renders with correct title attribute', async () => {
+  test("renders with correct title attribute", async () => {
     const el = await fixture<AbsoluteHeaderView>(
-      html`<absolute-header-view></absolute-header-view>`
+      html`<absolute-header-view></absolute-header-view>`,
     );
-    const div = query(el, '.coverage-percentage-column');
+    const div = query(el, ".coverage-percentage-column");
     assert.equal(
-      div!.getAttribute('title'),
-      'Absolute coverage percentage(All Tests) of the whole file'
+      div!.getAttribute("title"),
+      "Absolute coverage percentage(All Tests) of the whole file",
     );
     BaseComponent.instances.delete(el);
   });
 });
 
-suite('IncrementalHeaderView', () => {
-  test('renders ΔCov text', async () => {
+suite("IncrementalHeaderView", () => {
+  test("renders ΔCov text", async () => {
     const el = await fixture<IncrementalHeaderView>(
-      html`<incremental-header-view></incremental-header-view>`
+      html`<incremental-header-view></incremental-header-view>`,
     );
-    const div = query(el, '.coverage-percentage-column');
+    const div = query(el, ".coverage-percentage-column");
     assert.isDefined(div);
-    assert.include(div!.textContent!, 'ΔCov');
+    assert.include(div!.textContent!, "ΔCov");
     BaseComponent.instances.delete(el);
   });
 
-  test('renders with correct title attribute', async () => {
+  test("renders with correct title attribute", async () => {
     const el = await fixture<IncrementalHeaderView>(
-      html`<incremental-header-view></incremental-header-view>`
+      html`<incremental-header-view></incremental-header-view>`,
     );
-    const div = query(el, '.coverage-percentage-column');
+    const div = query(el, ".coverage-percentage-column");
     assert.equal(
-      div!.getAttribute('title'),
-      'Incremental coverage percentage(All Tests) of new lines in the file'
+      div!.getAttribute("title"),
+      "Incremental coverage percentage(All Tests) of new lines in the file",
     );
     BaseComponent.instances.delete(el);
   });
 });
 
-suite('AbsoluteContentView', () => {
-  test('renders percentage text', async () => {
+suite("AbsoluteContentView", () => {
+  test("renders percentage text", async () => {
     const el = await fixture<AbsoluteContentView>(
-      html`<absolute-content-view></absolute-content-view>`
+      html`<absolute-content-view></absolute-content-view>`,
     );
-    assert.equal(el.percentageText, '-');
-    assert.equal(el.kind, 'absolute');
+    assert.equal(el.percentageText, "-");
+    assert.equal(el.kind, "absolute");
     BaseComponent.instances.delete(el);
   });
 
-  test('renders default dash when no percentage', async () => {
+  test("renders default dash when no percentage", async () => {
     const el = await fixture<AbsoluteContentView>(
-      html`<absolute-content-view></absolute-content-view>`
+      html`<absolute-content-view></absolute-content-view>`,
     );
-    const div = query(el, '.coverage-percentage-column');
-    assert.equal(div!.textContent, '-');
+    const div = query(el, ".coverage-percentage-column");
+    assert.equal(div!.textContent, "-");
     BaseComponent.instances.delete(el);
   });
 
-  test('extracts absolute value from PercentageData', () => {
+  test("extracts absolute value from PercentageData", () => {
     const el = new AbsoluteContentView();
-    assert.equal(
-      el.getPercentageFromData({absolute: 85}),
-      85
-    );
+    assert.equal(el.getPercentageFromData({ absolute: 85 }), 85);
   });
 });
 
-suite('IncrementalContentView', () => {
-  test('renders default dash', async () => {
+suite("IncrementalContentView", () => {
+  test("renders default dash", async () => {
     const el = await fixture<IncrementalContentView>(
-      html`<incremental-content-view></incremental-content-view>`
+      html`<incremental-content-view></incremental-content-view>`,
     );
-    assert.equal(el.kind, 'incremental');
+    assert.equal(el.kind, "incremental");
     BaseComponent.instances.delete(el);
   });
 
-  test('extracts incremental value from PercentageData', () => {
+  test("extracts incremental value from PercentageData", () => {
     const el = new IncrementalContentView();
-    assert.equal(
-      el.getPercentageFromData({incremental: 70}),
-      70
-    );
+    assert.equal(el.getPercentageFromData({ incremental: 70 }), 70);
   });
 });
