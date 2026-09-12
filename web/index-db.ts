@@ -54,7 +54,7 @@ interface CacheEntry<T> {
 }
 
 /** Current DB version — bump to invalidate coverage_store (a re-fetchable cache). */
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 /**
  * A persistent LRU cache for browser request data using IndexedDB.

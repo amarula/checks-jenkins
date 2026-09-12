@@ -48,6 +48,23 @@ export declare interface PercentageData {
   absolute_instruction?: number;
 }
 
+/**
+ * Aggregate coverage of every line a change modified, summed over all files.
+ */
+export declare interface PatchCoverage {
+  /** Modified lines covered by tests. */
+  covered: number;
+  /** Modified lines not covered by tests. */
+  missed: number;
+  /** covered + missed. */
+  total: number;
+  /**
+   * Line coverage of the modified lines, or undefined when the change touched
+   * no instrumented lines at all (docs-only, pure rename, pure deletion).
+   */
+  pct: number | undefined;
+}
+
 declare interface CoverageChangeInfo {
   changeNum: number;
   patchNum: number | undefined;
@@ -147,7 +164,13 @@ declare interface FileCoverageResponse {
   files: FileCoverageFile[];
 }
 
-const OVERALL_LOW_COVERAGE_WARNING_BAR = 70;
+/**
+ * Bar the lines a change modifies must clear.  Both the patch verdict and the
+ * per-file alerts grade the change's own lines, never the whole build — an
+ * absolute bar on the project would flag every change to a project below it,
+ * however well tested the change itself is.
+ */
+const PATCH_COVERAGE_WARNING_BAR = 70;
 
 const LOW_COVERAGE_REASON_PREFIXES = [
   "TRIVIAL_CHANGE",
@@ -264,6 +287,61 @@ export function getLowCoverageReason(
   return matches[0][matches[0].length - 1].toString().trim() || undefined;
 }
 
+/**
+ * Aggregates the coverage of every line this change modified into a single
+ * line-weighted figure.  Unlike the per-file incremental percentages, this
+ * sums over lines rather than averaging percentages, so a 3-line file at 0%
+ * plus a 300-line file at 100% aggregates to 99%, not 50%.
+ *
+ * A change that touched no instrumented lines (docs-only, rename, pure
+ * deletion) yields pct undefined — the "nothing to grade" case, which is not
+ * the same as a pct of 0 meaning "every touched line is untested".
+ */
+export function computePatchCoverage(
+  resp: ModifiedLinesResponse | null,
+): PatchCoverage {
+  let covered = 0;
+  let missed = 0;
+
+  for (const file of resp?.files || []) {
+    if (!file.fullyQualifiedFileName || !file.modifiedLinesBlocks) continue;
+    for (const block of file.modifiedLinesBlocks) {
+      const lineCount = block.endLine - block.startLine + 1;
+      if (block.type === "COVERED") {
+        covered += lineCount;
+      } else {
+        missed += lineCount;
+      }
+    }
+  }
+
+  const total = covered + missed;
+  return {
+    covered,
+    missed,
+    total,
+    pct: total > 0 ? Math.round((covered / total) * 100) : undefined,
+  };
+}
+
+/**
+ * Classifies a change by the coverage of its own lines: a patch that carries
+ * its own tests is good wherever the project as a whole stands, and one that
+ * does not is a warning the author can act on.  A Low-Coverage-Reason
+ * suppresses the warning, and a change with nothing instrumented has nothing
+ * to grade.
+ */
+export function classifyPatchCoverage(
+  patch: PatchCoverage | undefined,
+  hasReason: boolean,
+): Category {
+  const pct = patch?.pct;
+  if (pct === undefined || pct >= PATCH_COVERAGE_WARNING_BAR) {
+    return Category.INFO;
+  }
+  return hasReason ? Category.INFO : Category.WARNING;
+}
+
 interface CoverageCacheEntry {
   changeInfo: CoverageChangeInfo;
   /** Current statusLink from the completed run.  null when no run found. */
@@ -276,6 +354,8 @@ interface CoverageCacheEntry {
   ranges: { [path: string]: CoverageRange[] } | null;
   /** Parsed per-file percentages (for file list columns). */
   percentages: { [path: string]: PercentageData } | null;
+  /** Aggregate coverage of the modified lines (for the patch verdict). */
+  patchCoverage: PatchCoverage | null;
 }
 
 export class CoverageClient {
@@ -768,6 +848,7 @@ export class CoverageClient {
       projectResponse,
       ranges: this.parseRanges(modifiedLines),
       percentages,
+      patchCoverage: computePatchCoverage(modifiedLines),
     };
 
     this.setMemoryCache(memKey, entry);
@@ -917,8 +998,9 @@ export class CoverageClient {
 
   /**
    * Builds the coverage check results for a single attempt's cached entry:
-   * project-level stats first, followed by per-file low-coverage alerts.  Each
-   * result links to its coverage report in Jenkins.
+   * the patch verdict first, then the project-level stats as context, followed
+   * by per-file low-coverage alerts.  Each result links to its coverage report
+   * in Jenkins.
    */
   private buildCoverageResults(
     entry: CoverageCacheEntry | undefined,
@@ -927,6 +1009,7 @@ export class CoverageClient {
   ): CheckResult[] {
     const projectResp = entry?.projectResponse;
     const percentages = entry?.percentages || {};
+    const patch = entry?.patchCoverage ?? undefined;
     const coverageResults: CheckResult[] = [];
     const baseUrl = entry?.statusLink
       ? `${entry.statusLink}${coverageId}`
@@ -935,8 +1018,29 @@ export class CoverageClient {
       { url, icon: LinkIcon.EXTERNAL, primary: true },
     ];
 
-    // Project-level stats first, so the global percentage is always visible
-    // above any per-file alerts.
+    // The verdict grades the lines this change modified, so it leads the run:
+    // a patch that carries its own tests is good wherever the project as a
+    // whole stands, and one that does not is a warning the author can act on.
+    if (patch && patch.pct !== undefined) {
+      const belowBar = patch.pct < PATCH_COVERAGE_WARNING_BAR;
+      coverageResults.push({
+        category: classifyPatchCoverage(patch, reason !== undefined),
+        summary: belowBar
+          ? `${COVERAGE_CRITICAL} Patch coverage ${patch.pct}% — ${patch.missed} of ${patch.total} modified lines are not covered by tests`
+          : `${COVERAGE_CHART} Patch coverage: ${patch.pct}% — ${patch.covered} of ${patch.total} modified lines covered`,
+        message: belowBar
+          ? reason
+            ? "Low-Coverage-Reason provided — CL will not be blocked."
+            : "Please add tests for uncovered lines or add Low-Coverage-Reason in commit message."
+          : `Lines modified by this change clear the ${PATCH_COVERAGE_WARNING_BAR}% bar.`,
+        links: baseUrl ? reportLink(baseUrl) : undefined,
+      });
+    }
+
+    // Project-level stats follow as context — they describe the tree this
+    // change lands in rather than the change itself, so an absolute bar on
+    // them would flag every change to a project that sits below it, however
+    // well tested the change is.
     if (projectResp?.projectStatistics) {
       const s = projectResp.projectStatistics;
       const delta = projectResp.projectDelta;
@@ -962,20 +1066,20 @@ export class CoverageClient {
           `Class: ${coverageEmoji(parsePct(s.class))} ${s.class}${deltaOf("class")}`,
         );
       if (parts.length > 0) {
-        const linePct = parsePct(s.line);
+        const noInstrumented =
+          patch?.pct === undefined && Object.keys(percentages).length > 0
+            ? " No instrumented lines in this change."
+            : "";
         coverageResults.push({
-          category:
-            linePct !== undefined &&
-            linePct < OVERALL_LOW_COVERAGE_WARNING_BAR
-              ? Category.WARNING
-              : Category.INFO,
+          category: Category.INFO,
           summary: `${COVERAGE_CHART} Project coverage: ${parts.join(", ")}`,
           message:
             `Coverage metrics for this build. Loc: ${s.loc || "N/A"}.` +
             (delta?.loc ? ` ΔLoc: ${delta.loc}.` : "") +
             (projectResp.referenceBuild && projectResp.referenceBuild !== "-"
               ? ` Reference build: ${formatReferenceBuild(projectResp.referenceBuild)}.`
-              : ""),
+              : "") +
+            noInstrumented,
           links: baseUrl ? reportLink(baseUrl) : undefined,
         });
       }
@@ -984,10 +1088,10 @@ export class CoverageClient {
     // Per-file low-coverage alerts, each linking to that file's coverage.
     for (const file of Object.keys(percentages)) {
       const inc = percentages[file].incremental;
-      if (inc !== undefined && inc < OVERALL_LOW_COVERAGE_WARNING_BAR) {
+      if (inc !== undefined && inc < PATCH_COVERAGE_WARNING_BAR) {
         coverageResults.push({
           category: reason ? Category.INFO : Category.WARNING,
-          summary: `${COVERAGE_CRITICAL} ${file}: incremental ${inc}% < ${OVERALL_LOW_COVERAGE_WARNING_BAR}%`,
+          summary: `${COVERAGE_CRITICAL} ${file}: incremental ${inc}% < ${PATCH_COVERAGE_WARNING_BAR}%`,
           message: reason
             ? "Low-Coverage-Reason provided — CL will not be blocked."
             : "Please add tests for uncovered lines or add Low-Coverage-Reason in commit message.",
@@ -998,14 +1102,14 @@ export class CoverageClient {
       }
     }
 
-    // Fallback: per-file coverage exists but there are no low-coverage alerts
-    // and no project stats.  Still emit a run so the attempt's coverage link
-    // shows up and its good coverage is visible.
+    // Fallback: the attempt carries per-file coverage but produced no result
+    // above — no instrumented modified lines and no project stats.  Still emit
+    // a run so the attempt's coverage link shows up.
     if (coverageResults.length === 0 && Object.keys(percentages).length > 0) {
       coverageResults.push({
         category: Category.INFO,
-        summary: `${COVERAGE_CHART} Modified files all covered`,
-        message: `${Object.keys(percentages).length} modified file(s) at or above ${OVERALL_LOW_COVERAGE_WARNING_BAR}% incremental coverage.`,
+        summary: `${COVERAGE_CHART} Coverage data for ${Object.keys(percentages).length} modified file(s)`,
+        message: "No project statistics in this build.",
         links: baseUrl ? reportLink(baseUrl) : undefined,
       });
     }

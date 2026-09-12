@@ -19,14 +19,18 @@ import "./test/test-setup";
 import { assert } from "@open-wc/testing";
 import {
   CoverageClient,
+  classifyPatchCoverage,
+  computePatchCoverage,
   coverageUrlId,
   parsePct,
   parseProject,
   getLowCoverageReason,
   formatReferenceBuild,
   javaStringHashCode,
+  PatchCoverage,
 } from "./coverage";
 import { CoverageType, Side } from "@gerritcodereview/typescript-api/diff";
+import { Category } from "@gerritcodereview/typescript-api/checks";
 import { PluginApi } from "@gerritcodereview/typescript-api/plugin";
 
 suite("parseProject", () => {
@@ -484,5 +488,171 @@ suite("CoverageClient.parseRanges", () => {
     };
     const result = (client as any).parseRanges(resp);
     assert.deepEqual(result, {});
+  });
+});
+
+suite("computePatchCoverage", () => {
+  const block = (startLine: number, endLine: number, type: string) => ({
+    startLine,
+    endLine,
+    type,
+  });
+
+  test("returns an empty aggregate for a null response", () => {
+    assert.deepEqual(computePatchCoverage(null), {
+      covered: 0,
+      missed: 0,
+      total: 0,
+      pct: undefined,
+    });
+  });
+
+  test("returns an empty aggregate for a response without files", () => {
+    const result = computePatchCoverage({} as any);
+    assert.equal(result.total, 0);
+    assert.equal(result.pct, undefined);
+  });
+
+  test("sums covered and missed lines across blocks", () => {
+    const result = computePatchCoverage({
+      files: [
+        {
+          fullyQualifiedFileName: "src/foo.ts",
+          modifiedLinesBlocks: [block(1, 5, "COVERED"), block(6, 10, "MISSED")],
+        },
+      ],
+    });
+    assert.deepEqual(result, { covered: 5, missed: 5, total: 10, pct: 50 });
+  });
+
+  test("reports 0% rather than no data when every modified line is missed", () => {
+    const result = computePatchCoverage({
+      files: [
+        {
+          fullyQualifiedFileName: "src/foo.ts",
+          modifiedLinesBlocks: [block(1, 10, "MISSED")],
+        },
+      ],
+    });
+    assert.equal(result.pct, 0);
+  });
+
+  test("reports no data when no file has modified lines", () => {
+    const result = computePatchCoverage({
+      files: [{ fullyQualifiedFileName: "src/empty.ts" }],
+    } as any);
+    assert.equal(result.total, 0);
+    assert.equal(result.pct, undefined);
+  });
+
+  test("skips files without a fullyQualifiedFileName", () => {
+    const result = computePatchCoverage({
+      files: [{ modifiedLinesBlocks: [block(1, 5, "COVERED")] }],
+    } as any);
+    assert.equal(result.total, 0);
+  });
+
+  test("weights lines, not files", () => {
+    // A 3-line file at 0% plus a 300-line file at 100% is 99%, not the 50% an
+    // average of the two per-file percentages would give.
+    const result = computePatchCoverage({
+      files: [
+        {
+          fullyQualifiedFileName: "src/small.ts",
+          modifiedLinesBlocks: [block(1, 3, "MISSED")],
+        },
+        {
+          fullyQualifiedFileName: "src/large.ts",
+          modifiedLinesBlocks: [block(1, 300, "COVERED")],
+        },
+      ],
+    });
+    assert.equal(result.total, 303);
+    assert.equal(result.pct, 99);
+  });
+
+  test("rounds the percentage", () => {
+    const result = computePatchCoverage({
+      files: [
+        {
+          fullyQualifiedFileName: "src/foo.ts",
+          modifiedLinesBlocks: [block(1, 1, "COVERED"), block(2, 3, "MISSED")],
+        },
+      ],
+    });
+    assert.equal(result.pct, 33);
+  });
+
+  test("counts a single-line block as one line", () => {
+    const result = computePatchCoverage({
+      files: [
+        {
+          fullyQualifiedFileName: "src/foo.ts",
+          modifiedLinesBlocks: [block(7, 7, "COVERED")],
+        },
+      ],
+    });
+    assert.equal(result.covered, 1);
+    assert.equal(result.pct, 100);
+  });
+
+  test("counts a non-COVERED block as missed", () => {
+    const result = computePatchCoverage({
+      files: [
+        {
+          fullyQualifiedFileName: "src/foo.ts",
+          modifiedLinesBlocks: [block(1, 4, "PARTIAL")],
+        },
+      ],
+    });
+    assert.equal(result.missed, 4);
+    assert.equal(result.pct, 0);
+  });
+});
+
+suite("classifyPatchCoverage", () => {
+  const patch = (pct: number): PatchCoverage => ({
+    covered: pct,
+    missed: 100 - pct,
+    total: 100,
+    pct,
+  });
+
+  const nothingInstrumented: PatchCoverage = {
+    covered: 0,
+    missed: 0,
+    total: 0,
+    pct: undefined,
+  };
+
+  test("passes a patch exactly at the bar", () => {
+    assert.equal(classifyPatchCoverage(patch(70), false), Category.INFO);
+  });
+
+  test("passes a fully covered patch", () => {
+    assert.equal(classifyPatchCoverage(patch(100), false), Category.INFO);
+  });
+
+  test("warns on a patch just below the bar", () => {
+    assert.equal(classifyPatchCoverage(patch(69), false), Category.WARNING);
+  });
+
+  test("warns on a patch with no covered lines", () => {
+    assert.equal(classifyPatchCoverage(patch(0), false), Category.WARNING);
+  });
+
+  test("suppresses the warning with a Low-Coverage-Reason", () => {
+    assert.equal(classifyPatchCoverage(patch(0), true), Category.INFO);
+  });
+
+  test("does not warn when nothing was instrumented", () => {
+    assert.equal(
+      classifyPatchCoverage(nothingInstrumented, false),
+      Category.INFO,
+    );
+  });
+
+  test("does not warn when the entry carries no patch data", () => {
+    assert.equal(classifyPatchCoverage(undefined, false), Category.INFO);
   });
 });
