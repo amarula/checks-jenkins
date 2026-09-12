@@ -135,9 +135,14 @@ The cached `patchCoverage` aggregate — see `computePatchCoverage()` above — 
 | Condition | Category |
 |---|---|
 | `pct` undefined — the change touched no instrumented lines | `INFO` |
-| `pct` ≥ 70% | `INFO` |
+| `missed === 0` — every modified line is covered | `SUCCESS` |
+| `pct` ≥ 70%, with lines still missed | `INFO` |
 | `pct` < 70%, `Low-Coverage-Reason` present | `INFO` |
 | `pct` < 70%, no reason | `WARNING` |
+
+`SUCCESS` is the passed state — matching how warnings-ng results are graded in `fetcher.ts` — so a fully covered change reads as passed rather than as an informational note. It is reserved for a change that left no modified line uncovered: clearing the bar is not the same as covering everything, and the test is against the miss count rather than the rounded percentage, so a file at 99.9% cannot report itself as 100%. `ERROR` and `FATAL` are never emitted.
+
+Gerrit derives a run's badge from the most severe result in it, which is why the project-level result below carries the verdict's category: with everything informational, a passing coverage check would otherwise be reported as blue rather than as passed.
 
 The result links to the overall report at `{statusLink}{coverage_id}` and reads either
 
@@ -159,7 +164,7 @@ When `projectStatistics` is present, the run continues with the global project c
 "📊 Project coverage: Line: 🟢 88.44% (+5.70%), Branch: 🟢 82.19% (+3.33%), File: 🟢 100.00% (+3.46%), Class: 🟢 96.88% (+6.86%)"
 ```
 
-This result is always `INFO` — it describes the tree the change lands in rather than the change itself — and links to the same overall report. When the change modified files but none of them carry instrumented lines, *"No instrumented lines in this change."* is appended to the message. When `projectDelta` is absent, the deltas are simply omitted; the `Loc` delta (`ΔLoc`) is appended to the result message.
+This result carries the verdict's category when the verdict passed outright, and is `INFO` otherwise: it describes the tree the change lands in rather than the change itself, so it never adds severity of its own. It links to the same overall report. When the change modified files but none of them carry instrumented lines, *"No instrumented lines in this change."* is appended to the message. When `projectDelta` is absent, the deltas are simply omitted; the `Loc` delta (`ΔLoc`) is appended to the result message.
 
 ### Per-file alerts
 

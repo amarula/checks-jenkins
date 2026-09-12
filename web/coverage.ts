@@ -330,15 +330,21 @@ export function computePatchCoverage(
  * does not is a warning the author can act on.  A Low-Coverage-Reason
  * suppresses the warning, and a change with nothing instrumented has nothing
  * to grade.
+ *
+ * SUCCESS — the passed state, as warnings-ng results are graded in
+ * fetcher.ts — is reserved for a change that left no modified line uncovered.
+ * A patch above the bar with lines still missed is reported as INFO rather
+ * than as passed, and clearing the bar is not the same as covering
+ * everything: it is tested against the miss count, not the rounded
+ * percentage, so a file at 99.9% cannot report itself as 100%.
  */
 export function classifyPatchCoverage(
   patch: PatchCoverage | undefined,
   hasReason: boolean,
 ): Category {
-  const pct = patch?.pct;
-  if (pct === undefined || pct >= PATCH_COVERAGE_WARNING_BAR) {
-    return Category.INFO;
-  }
+  if (!patch || patch.pct === undefined) return Category.INFO;
+  if (patch.missed === 0) return Category.SUCCESS;
+  if (patch.pct >= PATCH_COVERAGE_WARNING_BAR) return Category.INFO;
   return hasReason ? Category.INFO : Category.WARNING;
 }
 
@@ -1010,6 +1016,7 @@ export class CoverageClient {
     const projectResp = entry?.projectResponse;
     const percentages = entry?.percentages || {};
     const patch = entry?.patchCoverage ?? undefined;
+    const verdict = classifyPatchCoverage(patch, reason !== undefined);
     const coverageResults: CheckResult[] = [];
     const baseUrl = entry?.statusLink
       ? `${entry.statusLink}${coverageId}`
@@ -1024,7 +1031,7 @@ export class CoverageClient {
     if (patch && patch.pct !== undefined) {
       const belowBar = patch.pct < PATCH_COVERAGE_WARNING_BAR;
       coverageResults.push({
-        category: classifyPatchCoverage(patch, reason !== undefined),
+        category: verdict,
         summary: belowBar
           ? `${COVERAGE_CRITICAL} Patch coverage ${patch.pct}% — ${patch.missed} of ${patch.total} modified lines are not covered by tests`
           : `${COVERAGE_CHART} Patch coverage: ${patch.pct}% — ${patch.covered} of ${patch.total} modified lines covered`,
@@ -1040,7 +1047,10 @@ export class CoverageClient {
     // Project-level stats follow as context — they describe the tree this
     // change lands in rather than the change itself, so an absolute bar on
     // them would flag every change to a project that sits below it, however
-    // well tested the change is.
+    // well tested the change is.  They carry the verdict's category when it
+    // passed outright, so that a fully covered change reads as passed rather
+    // than as a note; otherwise they stay informational and never add
+    // severity of their own.
     if (projectResp?.projectStatistics) {
       const s = projectResp.projectStatistics;
       const delta = projectResp.projectDelta;
@@ -1071,7 +1081,8 @@ export class CoverageClient {
             ? " No instrumented lines in this change."
             : "";
         coverageResults.push({
-          category: Category.INFO,
+          category:
+            verdict === Category.SUCCESS ? Category.SUCCESS : Category.INFO,
           summary: `${COVERAGE_CHART} Project coverage: ${parts.join(", ")}`,
           message:
             `Coverage metrics for this build. Loc: ${s.loc || "N/A"}.` +

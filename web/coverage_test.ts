@@ -625,12 +625,25 @@ suite("classifyPatchCoverage", () => {
     pct: undefined,
   };
 
-  test("passes a patch exactly at the bar", () => {
-    assert.equal(classifyPatchCoverage(patch(70), false), Category.INFO);
+  test("passes a patch that left no modified line uncovered", () => {
+    assert.equal(classifyPatchCoverage(patch(100), false), Category.SUCCESS);
   });
 
-  test("passes a fully covered patch", () => {
-    assert.equal(classifyPatchCoverage(patch(100), false), Category.INFO);
+  test("reports an above-bar patch with missed lines as informational", () => {
+    // Clearing the bar is not the same as covering everything.
+    assert.equal(classifyPatchCoverage(patch(70), false), Category.INFO);
+    assert.equal(classifyPatchCoverage(patch(99), false), Category.INFO);
+  });
+
+  test("does not pass a patch on a rounded 100", () => {
+    // 999 of 1000 lines covered rounds to 100%, but a line is still missed.
+    const rounded: PatchCoverage = {
+      covered: 999,
+      missed: 1,
+      total: 1000,
+      pct: 100,
+    };
+    assert.equal(classifyPatchCoverage(rounded, false), Category.INFO);
   });
 
   test("warns on a patch just below the bar", () => {
