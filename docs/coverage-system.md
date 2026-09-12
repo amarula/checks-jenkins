@@ -4,7 +4,7 @@ The coverage subsystem fetches code-coverage metrics from Jenkins' [Code Coverag
 
 1. **Line-level annotations** — green (COVERED) / red (NOT_COVERED) highlights in the diff view.
 2. **File-list columns** — per-file line, branch and instruction coverage (whole file) plus line coverage of new lines (`Cov(L) | Cov(B) | Cov(I) | ΔCov(L)`).
-3. **Checks tab alert** — a `Code Coverage` check run warning on low-coverage files.
+3. **Checks tab verdict** — a `Code Coverage` check run grading the change's own lines, followed by the project statistics as context and per-file alerts.
 
 ## Endpoints
 
@@ -84,6 +84,24 @@ if total > 0:
 
 Returns `{ [path]: { incremental: number } }`.
 
+### `computePatchCoverage()` — aggregate coverage of the change
+
+Input: same `ModifiedLinesResponse`.
+
+Line-weighted aggregate over every modified-line block of every file:
+
+```
+covered = Σ (block.endLine - block.startLine + 1)  for blocks where type === 'COVERED'
+missed  = Σ (block.endLine - block.startLine + 1)  for all other blocks
+total   = covered + missed
+
+pct = total > 0 ? Math.round((covered / total) * 100) : undefined
+```
+
+Because it sums over lines rather than averaging the per-file percentages, a 3-line file at 0% plus a 300-line file at 100% aggregates to 99%, not 50%. `pct` is undefined when the change touched no instrumented lines at all (docs-only, pure rename, pure deletion) — distinct from a `pct` of 0, which means every touched line is untested.
+
+Returns `{ covered, missed, total, pct }`. This is the figure the check run is classified on (see [Low-coverage alert](#low-coverage-alert)); the per-file `incremental` percentages are not aggregated into it.
+
 ### `computeAbsolutePercentages()` — per-file absolute coverage
 
 Input: `FileCoverageResponse` from `{coverage_id}/files/api/json`, with `files[].metrics` mapping metric names to formatted percentages (e.g. `{"line": "88.44%", "branch": "82.19%", "instruction": "98.36%"}`).
@@ -98,38 +116,63 @@ absolute_instruction = parsePct(metrics["instruction"])
 
 Returns `{ [path]: { absolute, absolute_branch, absolute_instruction } }`, setting only the metrics that are present.
 
-`updateCache()` merges the incremental and absolute maps so each path carries all fields in a single `PercentageData` object.
+`updateCache()` merges the incremental and absolute maps so each path carries all fields in a single `PercentageData` object, and stores the change-level `computePatchCoverage()` aggregate on the cache entry alongside them.
 
 ## Low-coverage alert
 
-`mayBeShowLowCoverageAlert()` runs as part of the unified checks provider. It emits one `Code Coverage` check run per completed attempt, each with a `statusLink` to that attempt's coverage report. Within a run, results are ordered project-stats-first, then per-file alerts:
+`mayBeShowLowCoverageAlert()` runs as part of the unified checks provider. It emits one `Code Coverage` check run per completed attempt, each with a `statusLink` to that attempt's coverage report. Within a run, results are ordered patch-verdict-first, then the project statistics as context, then per-file alerts:
 
 ```typescript
-const OVERALL_LOW_COVERAGE_WARNING_BAR = 70;
+const PATCH_COVERAGE_WARNING_BAR = 70;
 ```
 
-### Project summary (first line)
+The bar applies to the lines a change modifies, never to the project as a whole: an absolute bar on the project would flag every change to a project that sits below it, however well the change itself is tested.
 
-When `projectStatistics` is present, the run starts with the global project coverage, with each metric's change vs the reference build appended from `projectDelta`:
+### Patch verdict (first line)
+
+The cached `patchCoverage` aggregate — see `computePatchCoverage()` above — decides the run's severity through `classifyPatchCoverage()`:
+
+| Condition | Category |
+|---|---|
+| `pct` undefined — the change touched no instrumented lines | `INFO` |
+| `pct` ≥ 70% | `INFO` |
+| `pct` < 70%, `Low-Coverage-Reason` present | `INFO` |
+| `pct` < 70%, no reason | `WARNING` |
+
+The result links to the overall report at `{statusLink}{coverage_id}` and reads either
 
 ```
-"Project coverage: Line: 🟢 88.44% (+5.70%), Branch: 🟢 82.19% (+3.33%), File: 🟢 100.00% (+3.46%), Class: 🟢 96.88% (+6.86%)"
+"🔴 Patch coverage 41% — 12 of 29 modified lines are not covered by tests"
 ```
 
-If `Line` coverage is below 70%, this is `WARNING`; otherwise `INFO`. This result links to the overall report at `{statusLink}{coverage_id}`. When `projectDelta` is absent, the deltas are simply omitted; the `Loc` delta (`ΔLoc`) is appended to the result message.
+followed by the *add tests / add `Low-Coverage-Reason`* message, or
+
+```
+"📊 Patch coverage: 92% — 46 of 50 modified lines covered"
+```
+
+### Project statistics (context)
+
+When `projectStatistics` is present, the run continues with the global project coverage, with each metric's change vs the reference build appended from `projectDelta`:
+
+```
+"📊 Project coverage: Line: 🟢 88.44% (+5.70%), Branch: 🟢 82.19% (+3.33%), File: 🟢 100.00% (+3.46%), Class: 🟢 96.88% (+6.86%)"
+```
+
+This result is always `INFO` — it describes the tree the change lands in rather than the change itself — and links to the same overall report. When the change modified files but none of them carry instrumented lines, *"No instrumented lines in this change."* is appended to the message. When `projectDelta` is absent, the deltas are simply omitted; the `Loc` delta (`ΔLoc`) is appended to the result message.
 
 ### Per-file alerts
 
-For every file with coverage data, if `incremental < 70`:
+For every file with coverage data, if `incremental < PATCH_COVERAGE_WARNING_BAR`:
 
 - **Without `Low-Coverage-Reason`**: emits a `WARNING` result with message *"Please add tests for uncovered lines or add Low-Coverage-Reason in commit message."*
 - **With `Low-Coverage-Reason`**: demotes to `INFO` with message *"Low-Coverage-Reason provided — CL will not be blocked."*
 
 Each per-file alert links to that file's coverage report at `{statusLink}{coverage_id}/{javaStringHashCode(file)}/`.
 
-### Fully-covered fallback
+### Fallback
 
-When an attempt has per-file coverage but no file below threshold and no project stats, a single `INFO` result — *"Modified files all covered"* — is emitted so the attempt still surfaces its coverage link.
+When an attempt carries per-file coverage but none of the results above fired — nothing instrumented, no project statistics and no per-file alert — a single `INFO` result naming how many modified files carry coverage data is emitted, so the attempt still surfaces its coverage link.
 
 ### Quality gates
 
