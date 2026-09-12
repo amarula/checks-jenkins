@@ -24,6 +24,7 @@ import {
   AbsoluteContentView,
   IncrementalContentView,
 } from "./coverage-percentage-views";
+import { coverageEmoji } from "./coverage";
 import { query } from "./test/test-util";
 
 suite("BaseComponent.instances tracking", () => {
@@ -151,5 +152,52 @@ suite("IncrementalContentView", () => {
   test("extracts incremental value from PercentageData", () => {
     const el = new IncrementalContentView();
     assert.equal(el.getPercentageFromData({ incremental: 70 }), 70);
+  });
+});
+
+suite("BaseCoverageComponent.computePercentage", () => {
+  const render = async (data: { absolute?: number }) => {
+    const el = new AbsoluteContentView();
+    const provider = async () => data;
+    await (el as any).computePercentage(
+      "123",
+      { patchNum: "1" },
+      "src/foo.ts",
+      provider,
+    );
+    return el;
+  };
+
+  test("rounds the API's second decimal away", async () => {
+    // The column is too narrow for two decimals plus the tier emoji, which
+    // would otherwise break onto a line of its own.
+    const el = await render({ absolute: 88.44 });
+    assert.equal(el.percentageText, "88.4%");
+    assert.equal(el.percentageValue, 88.4);
+  });
+
+  test("keeps whole numbers whole", async () => {
+    // Math.round, not toFixed: "100.0%" would be as wide as the value the
+    // rounding exists to shorten.
+    const el = await render({ absolute: 100 });
+    assert.equal(el.percentageText, "100%");
+  });
+
+  test("rounds zero to a single zero", async () => {
+    const el = await render({ absolute: 0 });
+    assert.equal(el.percentageText, "0%");
+  });
+
+  test("derives the tier from the rounded value, not the raw one", async () => {
+    // 79.96 must not read "80%" next to the moderate circle.
+    const el = await render({ absolute: 79.96 });
+    assert.equal(el.percentageText, "80%");
+    assert.equal(coverageEmoji(el.percentageValue), coverageEmoji(80));
+  });
+
+  test("falls back to a dash when the file has no value", async () => {
+    const el = await render({});
+    assert.equal(el.percentageText, "-");
+    assert.equal(el.percentageValue, undefined);
   });
 });

@@ -28,6 +28,10 @@ const COMMON_CSS = css`
   .coverage-percentage-column {
     text-align: center;
     width: 100%;
+    /* Keep the tier emoji on the same line as its value: a centred box that
+       is too narrow otherwise breaks between the two, leaving the circle
+       above the percentage instead of to its left. */
+    white-space: nowrap;
   }
   .coverage-percentage-column.hidden {
     display: none;
@@ -131,10 +135,17 @@ export class BaseCoverageComponent extends BaseComponent {
 
     if (provider) {
       const p = await provider(changeNum, path, patchRange.patchNum);
-      if (p && Number.isFinite(this.getPercentageFromData(p))) {
-        const raw = this.getPercentageFromData(p)!;
-        this.percentageValue = raw;
-        this.percentageText = raw.toString() + '%';
+      const raw = p ? this.getPercentageFromData(p) : undefined;
+      if (raw != null && Number.isFinite(raw)) {
+        // One decimal: the column is too narrow to carry the API's second
+        // one together with the tier emoji, which would otherwise break onto
+        // a line of its own.  Rounded once, so the emoji and the text can
+        // never disagree at a tier boundary (79.96 would read "80%" with the
+        // moderate circle).  Math.round, not toFixed, so that 100 keeps
+        // reading "100%" rather than "100.0%".
+        const pct = Math.round(raw * 10) / 10;
+        this.percentageValue = pct;
+        this.percentageText = pct.toString() + '%';
       } else {
         this.percentageText = '-';
         this.percentageValue = undefined;
