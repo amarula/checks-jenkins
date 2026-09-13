@@ -25,6 +25,13 @@ node('android-build') {
     // — not Groovy — expands WORKSPACE.
     final def RESULTS_DIR = '${WORKSPACE}/results'
 
+    // The Java analysers are not part of the Gerrit build: static-analysis.sh
+    // fetches these pinned releases.  Bump them here.
+    final def PMD_VERSION = '7.7.0'
+    final def CHECKSTYLE_VERSION = '10.18.1'
+    final def SPOTBUGS_VERSION = '4.8.6'
+    final def GERRIT_VERSION = GERRIT_TAG.replaceFirst('^v', '')
+
     try {
         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
             ver.build(repoUrl, [
@@ -123,6 +130,29 @@ node('android-build') {
                         # Run them directly via bazel run.
                         bazel run //plugins/checks-jenkins/web:web_test_runner
                     """
+                },
+
+                'Static analysis': {
+                    sh """#!/bin/bash -el
+                        # Last, because none of it gates: its reports are
+                        # published but never fail the build, so it should not
+                        # stand between a failing change and its test results.
+                        # The analysers exit non-zero whenever they find
+                        # something, which is why the script ignores those
+                        # codes and recordIssues does the reporting.
+                        export RESULTS_DIR="${RESULTS_DIR}"
+                        export TOOLS_DIR="\${WORKSPACE}/static-analysis-tools"
+                        export PMD_VERSION="${PMD_VERSION}"
+                        export CHECKSTYLE_VERSION="${CHECKSTYLE_VERSION}"
+                        export SPOTBUGS_VERSION="${SPOTBUGS_VERSION}"
+                        export GERRIT_VERSION="${GERRIT_VERSION}"
+
+                        # Not ./.jenkins/...: Setup moves the plugin sources
+                        # into plugin-source/, so PWD holds no .jenkins.  Go
+                        # through the symlink the other stages reach sources
+                        # by, which points at that directory.
+                        "\${WORKSPACE}/plugins/checks-jenkins/.jenkins/static-analysis.sh"
+                    """
                 }
             ], options)
         }
@@ -133,6 +163,23 @@ node('android-build') {
         // never reached a report — a failure in Setup — from failing here on
         // top of its real error.
         junit testResults: 'results/*.xml', allowEmptyResults: true
+
+        // Static-analysis findings go to warnings-ng rather than to junit:
+        // they are not tests, and this way each finding keeps its own
+        // severity instead of being flattened into one pass/fail case.
+        // failOnError keeps a report that was never written — an analyser
+        // that was skipped, a failed download — from failing the build on
+        // top of whatever else went wrong.
+        recordIssues(
+            enabledForFailure: true,
+            failOnError: false,
+            tools: [
+                pmdParser(pattern: 'results/pmd.xml'),
+                checkStyle(pattern: 'results/checkstyle.xml'),
+                spotBugs(pattern: 'results/spotbugs.xml'),
+                cpd(pattern: 'results/cpd.xml'),
+            ],
+        )
 
         if (currentBuild.result == 'FAILURE' || currentBuild.result == 'UNSTABLE') {
             explainError()
