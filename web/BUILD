@@ -61,6 +61,11 @@ web_test_runner(
     data = [
         ":checks-jenkins-ts-tests",
         ":tsconfig",
+        # Loaded by web_test_runner.sh by path.  bazel run executes in the
+        # runfiles tree, so anything the script reads by a workspace-relative
+        # path has to be listed here to exist there.
+        "junit-reporter.mjs",
+        "wtr-config.mjs",
         "@plugins_npm//:node_modules",
         "@ui_dev_npm//:node_modules",
     ],
