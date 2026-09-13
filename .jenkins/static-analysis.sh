@@ -103,5 +103,3 @@ if fetch "https://github.com/spotbugs/spotbugs/releases/download/$SPOTBUGS_VERSI
 else
     echo "static-analysis: spotbugs download failed, skipping it" >&2
 fi
-
-ls -l "$RESULTS_DIR"
