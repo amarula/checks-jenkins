@@ -18,6 +18,13 @@ node('android-build') {
     final def GERRIT_TAG = 'v3.14.0'
     final def GERRIT_REPO = 'https://gerrit.googlesource.com/gerrit'
 
+    // Where the verification stages drop their JUnit reports.  Written inside
+    // the container, read back by the junit step below: the workspace is
+    // mounted at the same path on the host, so the file the stages create is
+    // the file Jenkins publishes.  Kept as a literal string so that the shell
+    // — not Groovy — expands WORKSPACE.
+    final def RESULTS_DIR = '${WORKSPACE}/results'
+
     try {
         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
             ver.build(repoUrl, [
@@ -75,8 +82,42 @@ node('android-build') {
                     """
                 },
 
+                'Lint': {
+                    sh """#!/bin/bash -el
+                        mkdir -p "${RESULTS_DIR}"
+
+                        # lint_test is the eslint gate plugin_eslint() declares
+                        # in web/BUILD.  Bazel writes the JUnit XML on its own,
+                        # at bazel-testlogs/<package>/<target>/test.xml, whether
+                        # the test passes or fails.
+                        #
+                        # That path is a symlink into the container's output
+                        # base, which does not resolve on the host, so copy the
+                        # report out as a real file — the same reason the Build
+                        # stage copies the jar with cp -L rather than archiving
+                        # the symlink.
+                        #
+                        # The failure is held back until after the copy so a
+                        # lint error still produces a report; it is then
+                        # re-raised to fail the stage, as it does locally.
+                        rc=0
+                        bazel test //plugins/checks-jenkins/web:lint_test || rc=\$?
+                        cp -L "\${WORKSPACE}/bazel-testlogs/plugins/checks-jenkins/web/lint_test/test.xml" \
+                            "${RESULTS_DIR}/lint.xml"
+                        exit \${rc}
+                    """
+                },
+
                 'Test': {
                     sh """#!/bin/bash -el
+                        mkdir -p "${RESULTS_DIR}"
+
+                        # Read by web/junit-reporter.mjs, which
+                        # web/wtr-config.mjs merges into the Gerrit config.
+                        # The report is written on test-run-finished, so it
+                        # survives a failing test run.
+                        export WTR_JUNIT_OUTPUT="${RESULTS_DIR}/web-tests.xml"
+
                         # web_test_runner is sh_binary targets
                         # (not sh_test), so bazel test doesn't discover them.
                         # Run them directly via bazel run.
@@ -85,6 +126,14 @@ node('android-build') {
                 }
             ], options)
         }
+
+        // Publish both reports after the stages, not inside them, so a stage
+        // that fails still gets its results reported: each report is written
+        // before its command exits.  allowEmptyResults keeps a build that
+        // never reached a report — a failure in Setup — from failing here on
+        // top of its real error.
+        junit testResults: 'results/*.xml', allowEmptyResults: true
+
         if (currentBuild.result == 'FAILURE' || currentBuild.result == 'UNSTABLE') {
             explainError()
         }
