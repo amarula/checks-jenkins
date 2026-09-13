@@ -125,6 +125,11 @@ node('android-build') {
                         # survives a failing test run.
                         export WTR_JUNIT_OUTPUT="${RESULTS_DIR}/web-tests.xml"
 
+                        # Setting this is also what turns coverage on in
+                        # web_test_runner.sh — the reporter writes its
+                        # Cobertura XML here, for recordCoverage below.
+                        export WTR_COVERAGE_DIR="${RESULTS_DIR}"
+
                         # web_test_runner is sh_binary targets
                         # (not sh_test), so bazel test doesn't discover them.
                         # Run them directly via bazel run.
@@ -179,6 +184,16 @@ node('android-build') {
                 spotBugs(pattern: 'results/spotbugs.xml'),
                 cpd(pattern: 'results/cpd.xml'),
             ],
+        )
+
+        // The plugin's own coverage, published through the Jenkins Code
+        // Coverage API plugin — the same plugin this repository reads in
+        // Gerrit, so these are the endpoints it consumes.  The id has to stay
+        // 'coverage' to match coverage_id, which defaults to it.
+        recordCoverage(
+            id: 'coverage',
+            name: 'Web',
+            tools: [[parser: 'COBERTURA', pattern: 'results/cobertura-coverage.xml']],
         )
 
         if (currentBuild.result == 'FAILURE' || currentBuild.result == 'UNSTABLE') {
