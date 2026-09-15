@@ -1,5 +1,4 @@
 #!groovy
-
 @Library('ci_scripts')
 @Library('repo_jenkins_lib')
 import com.amarula.build.Build
@@ -29,6 +28,20 @@ node('android-build') {
     def isTag = false
     def tagCommitish = ''
     def branchParam = BRANCH?.trim() ?: 'master'
+
+    // Where the verification stages drop their JUnit reports.  Written inside
+    // the container, read back by the junit step below: the workspace is
+    // mounted at the same path on the host, so the file the stages create is
+    // the file Jenkins publishes.  Kept as a literal string so that the shell
+    // — not Groovy — expands WORKSPACE.
+    final def RESULTS_DIR = '${WORKSPACE}/results'
+
+    // The Java analysers are not part of the Gerrit build: static-analysis.sh
+    // fetches these pinned releases.  Bump them here.
+    final def PMD_VERSION = '7.7.0'
+    final def CHECKSTYLE_VERSION = '10.18.1'
+    final def SPOTBUGS_VERSION = '4.8.6'
+    final def GERRIT_VERSION = GERRIT_TAG.replaceFirst('^v', '')
 
     try {
         catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
@@ -108,16 +121,118 @@ node('android-build') {
                     """
                 },
 
+                'Lint': {
+                    sh """#!/bin/bash -el
+                        mkdir -p "${RESULTS_DIR}"
+
+                        # lint_test is the eslint gate plugin_eslint() declares
+                        # in web/BUILD.  Bazel writes the JUnit XML on its own,
+                        # at bazel-testlogs/<package>/<target>/test.xml, whether
+                        # the test passes or fails.
+                        #
+                        # That path is a symlink into the container's output
+                        # base, which does not resolve on the host, so copy the
+                        # report out as a real file — the same reason the Build
+                        # stage copies the jar with cp -L rather than archiving
+                        # the symlink.
+                        #
+                        # The failure is held back until after the copy so a
+                        # lint error still produces a report; it is then
+                        # re-raised to fail the stage, as it does locally.
+                        bazel test //plugins/checks-jenkins/web:lint_test
+                        if [ "\$?" -eq 0 ]; then
+                            cp -L "\${WORKSPACE}/bazel-testlogs/plugins/checks-jenkins/web/lint_test/test.xml" \
+                                "${RESULTS_DIR}/lint.xml"
+                        fi
+                    """
+                },
+
                 'Test': {
                     sh """#!/bin/bash -el
+                        mkdir -p "${RESULTS_DIR}"
+
+                        # Read by web/junit-reporter.mjs, which
+                        # web/wtr-config.mjs merges into the Gerrit config.
+                        # The report is written on test-run-finished, so it
+                        # survives a failing test run.
+                        export WTR_JUNIT_OUTPUT="${RESULTS_DIR}/web-tests.xml"
+
+                        # Setting this is also what turns coverage on in
+                        # web_test_runner.sh — the reporter writes its
+                        # Cobertura XML here, for recordCoverage below.
+                        export WTR_COVERAGE_DIR="${RESULTS_DIR}"
+
                         # web_test_runner is sh_binary targets
                         # (not sh_test), so bazel test doesn't discover them.
                         # Run them directly via bazel run.
                         bazel run //plugins/checks-jenkins/web:web_test_runner
                     """
+                },
+
+                'Static analysis': {
+                    sh """#!/bin/bash -el
+                        # Last, because none of it gates: its reports are
+                        # published but never fail the build, so it should not
+                        # stand between a failing change and its test results.
+                        # The analysers exit non-zero whenever they find
+                        # something, which is why the script ignores those
+                        # codes and recordIssues does the reporting.
+                        export RESULTS_DIR="${RESULTS_DIR}"
+                        export TOOLS_DIR="\${WORKSPACE}/static-analysis-tools"
+                        export PMD_VERSION="${PMD_VERSION}"
+                        export CHECKSTYLE_VERSION="${CHECKSTYLE_VERSION}"
+                        export SPOTBUGS_VERSION="${SPOTBUGS_VERSION}"
+                        export GERRIT_VERSION="${GERRIT_VERSION}"
+
+                        # Not ./.jenkins/...: Setup moves the plugin sources
+                        # into plugin-source/, so PWD holds no .jenkins.  Go
+                        # through the symlink the other stages reach sources
+                        # by, which points at that directory.
+                        "\${WORKSPACE}/plugins/checks-jenkins/.jenkins/static-analysis.sh"
+                    """
                 }
             ], options)
         }
+
+        // Publish both reports after the stages, not inside them, so a stage
+        // that fails still gets its results reported: each report is written
+        // before its command exits.  allowEmptyResults keeps a build that
+        // never reached a report — a failure in Setup — from failing here on
+        // top of its real error.
+        junit testResults: 'results/*.xml', allowEmptyResults: true
+
+        // Static-analysis findings go to warnings-ng rather than to junit:
+        // they are not tests, and this way each finding keeps its own
+        // severity instead of being flattened into one pass/fail case.
+        // failOnError keeps a report that was never written — an analyser
+        // that was skipped, a failed download — from failing the build on
+        // top of whatever else went wrong.
+        recordIssues(
+            enabledForFailure: true,
+            failOnError: false,
+            tools: [
+                pmdParser(pattern: 'results/pmd.xml'),
+                checkStyle(pattern: 'results/checkstyle.xml'),
+                spotBugs(pattern: 'results/spotbugs.xml'),
+                cpd(pattern: 'results/cpd.xml'),
+            ],
+        )
+
+        // The plugin's own coverage, published through the Jenkins Code
+        // Coverage API plugin — the same plugin this repository reads in
+        // Gerrit, so these are the endpoints it consumes.  The id has to stay
+        // 'coverage' to match coverage_id, which defaults to it.
+        //
+        // lcov rather than cobertura: the Cobertura export of a JS report
+        // carries one <method> per function, and colliding names inside a
+        // class make the parser reject the whole file.  lcov has no
+        // class/method tree to trip over.
+        recordCoverage(
+            id: 'coverage',
+            name: 'Web',
+            tools: [[parser: 'LCOV', pattern: 'results/lcov.info']],
+        )
+
         if (currentBuild.result == 'FAILURE' || currentBuild.result == 'UNSTABLE') {
             explainError()
         } else {
