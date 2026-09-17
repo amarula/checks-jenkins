@@ -124,16 +124,30 @@ export class ChecksFetcher implements ChecksProvider {
 
   /** Endpoints that returned 403/error — skipped after {@link UNAVAILABLE_RETRY_BUDGET}
    *  consecutive failures within {@link UNAVAILABLE_TTL_MS}.  The counter
-   *  resets on the first successful request or when the TTL expires. */
+   *  resets on the first successful request or when the TTL expires.
+   *
+   *  Like {@link triggeredReruns}, this in-memory state measures elapsed time
+   *  with the monotonic clock (`performance.now()`): `Date.now()` can step
+   *  backwards (NTP correction, clock set by hand, restored snapshot) and an
+   *  entry stamped before the step would then stay fresh far past its TTL. */
   private unavailableEndpoints: Map<
     string,
     { failures: number; lastFailure: number }
   > = new Map();
 
-  /** RunKeys that the user has clicked rerun on, or that are currently RUNNING/RUNNABLE.
-   *  Maps key to the timestamp (Date.now()) when it was added. While non-empty,
-   *  all rerun actions are disabled to prevent double-triggering. */
-  private triggeredReruns: Map<string, number> = new Map();
+  /** RunKeys that the user has clicked rerun on, or that are currently RUNNING,
+   *  grouped by the change view they belong to (`change:patchset`).
+   *
+   *  The grouping matters: the fetcher instance outlives the change view (the
+   *  plugin is installed once per page load and Gerrit is a single-page app),
+   *  so entries left behind by a previously displayed change would otherwise
+   *  keep the rerun buttons of the next one disabled.
+   *
+   *  Each inner map holds runKey → performance.now(). While non-empty, all
+   *  rerun actions of that change are disabled to prevent double-triggering.
+   *  The timestamps only ever measure elapsed time within this page load, so
+   *  they use the monotonic clock — see unavailableEndpoints. */
+  private triggeredReruns: Map<string, Map<string, number>> = new Map();
 
   /** Maximum time (ms) a recently-clicked rerun remains disabled while waiting
    *  for Jenkins to update its status to RUNNING. */
@@ -172,7 +186,10 @@ export class ChecksFetcher implements ChecksProvider {
     const key = `${jenkinsName}:${endpoint}`;
     const entry = this.unavailableEndpoints.get(key);
     if (!entry) return false;
-    if (Date.now() - entry.lastFailure > ChecksFetcher.UNAVAILABLE_TTL_MS) {
+    if (
+      performance.now() - entry.lastFailure >
+      ChecksFetcher.UNAVAILABLE_TTL_MS
+    ) {
       this.unavailableEndpoints.delete(key);
       return false;
     }
@@ -184,7 +201,7 @@ export class ChecksFetcher implements ChecksProvider {
     const entry = this.unavailableEndpoints.get(key);
     this.unavailableEndpoints.set(key, {
       failures: (entry?.failures ?? 0) + 1,
-      lastFailure: Date.now(),
+      lastFailure: performance.now(),
     });
   }
 
@@ -275,6 +292,9 @@ export class ChecksFetcher implements ChecksProvider {
         runs: [],
       };
     }
+    // Rerun state belongs to the change view being fetched, never to the
+    // fetcher instance as a whole — see triggeredReruns.
+    const changeKey = ChecksFetcher.changeKeyOf(changeData);
     const checkRuns: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
@@ -301,13 +321,17 @@ export class ChecksFetcher implements ChecksProvider {
       ];
       const cachedEntry: CachedRuns | undefined =
         await cacheService.get(runsKey);
-      const now = Date.now();
+      // The cache outlives the page load, so its age is measured with the
+      // wall clock — entry.timestamp was written by an earlier session. The
+      // in-memory rerun state below is the opposite case and uses the
+      // monotonic clock instead.
+      const wallClockNow = Date.now();
       const cacheHit =
         cachedEntry &&
         cachedEntry.runs &&
         Array.isArray(cachedEntry.runs) &&
         cachedEntry.runs.length > 0 &&
-        now - cachedEntry.timestamp < ChecksFetcher.RUNS_CACHE_TTL_MS;
+        wallClockNow - cachedEntry.timestamp < ChecksFetcher.RUNS_CACHE_TTL_MS;
 
       let data: any; // the { runs: JenkinsCheckRun[] } payload we'll process
       let totalRuns: number;
@@ -357,7 +381,10 @@ export class ChecksFetcher implements ChecksProvider {
         // Cache the raw runs for next time (deep-clone before
         // computeTreeNames mutates them in-place).
         const cloned: JenkinsCheckRun[] = structuredClone(data.runs);
-        await cacheService.put(runsKey, { runs: cloned, timestamp: now });
+        await cacheService.put(runsKey, {
+          runs: cloned,
+          timestamp: wallClockNow,
+        });
       }
 
       // Apply flattened-tree naming before enrichment so checkName
@@ -448,28 +475,26 @@ export class ChecksFetcher implements ChecksProvider {
         checkRuns.push(...cachedData);
       }
 
-      // Sync triggeredReruns from current run statuses:
-      //  - RUNNING/RUNNABLE runs add/refresh their keys with a fresh timestamp.
+      // Sync the rerun state of this change view from the runs just fetched:
+      //  - RUNNING runs add/refresh their keys with a fresh timestamp.
       //  - Keys added by user clicks survive the shouldReload re-fetch gap
       //    (Jenkins may not have queued the job yet) via a TTL.
-      //  - Keys whose TTL has expired with no active run are removed.
+      //  - Keys whose TTL has expired are removed, in every change view.
+      // RUNNABLE runs are deliberately not tracked: a job that has not started
+      // yet must stay triggerable, and the eager add in rerun() already covers
+      // the window between a click and Jenkins reporting the build as RUNNING.
+      const monotonicNow = performance.now();
+      const reruns = this.rerunState(changeKey);
       for (const run of data.runs) {
-        if (
-          run.status === RunStatus.RUNNING ||
-          run.status === RunStatus.RUNNABLE
-        ) {
+        if (run.status === RunStatus.RUNNING) {
           const { runKey } = this.parseExternalId(run.externalId);
-          if (runKey) this.triggeredReruns.set(runKey, now);
+          if (runKey) reruns.set(runKey, monotonicNow);
         }
       }
-      for (const [k, ts] of this.triggeredReruns) {
-        if (now - ts > ChecksFetcher.RERUN_DISABLE_TTL_MS) {
-          this.triggeredReruns.delete(k);
-        }
-      }
+      this.expireReruns(monotonicNow);
 
       for (const run of data.runs) {
-        checkRuns.push(this.convert(jenkins, changeData.repo, run));
+        checkRuns.push(this.convert(jenkins, changeData.repo, run, changeKey));
       }
     }
 
@@ -753,7 +778,39 @@ export class ChecksFetcher implements ChecksProvider {
       );
   }
 
-  convert(jenkins: Config, repo: string, run: JenkinsCheckRun): CheckRun {
+  /** Identifies the change view (change + patchset) a rerun state belongs to. */
+  private static changeKeyOf(changeData: ChangeData): string {
+    return `${changeData.changeNumber}:${changeData.patchsetNumber}`;
+  }
+
+  /** The pending-rerun state of one change view, created on first use. */
+  private rerunState(changeKey: string): Map<string, number> {
+    let state = this.triggeredReruns.get(changeKey);
+    if (state === undefined) {
+      state = new Map<string, number>();
+      this.triggeredReruns.set(changeKey, state);
+    }
+    return state;
+  }
+
+  /** Drops rerun keys older than the TTL, and the change views left empty. */
+  private expireReruns(now: number): void {
+    for (const [changeKey, state] of this.triggeredReruns) {
+      for (const [runKey, ts] of state) {
+        if (now - ts > ChecksFetcher.RERUN_DISABLE_TTL_MS) {
+          state.delete(runKey);
+        }
+      }
+      if (state.size === 0) this.triggeredReruns.delete(changeKey);
+    }
+  }
+
+  convert(
+    jenkins: Config,
+    repo: string,
+    run: JenkinsCheckRun,
+    changeKey: string,
+  ): CheckRun {
     const convertedRun: CheckRun = {
       attempt: run.attempt,
       change: run.change,
@@ -773,13 +830,16 @@ export class ChecksFetcher implements ChecksProvider {
     };
     const actions: Action[] = [];
     const { runKey } = this.parseExternalId(run.externalId);
-    const rerunDisabled = runKey
-      ? this.triggeredReruns.has(runKey) || this.triggeredReruns.size > 0
-      : this.triggeredReruns.size > 0;
+    // While a rerun of this change is pending, every action of the change is
+    // disabled: Gerrit renders no button at all for a disabled action, which is
+    // what keeps a second click from racing the first one before Jenkins
+    // reports the new build as RUNNING.
+    const reruns = this.triggeredReruns.get(changeKey);
+    const rerunPending = (reruns?.size ?? 0) > 0;
     const rerunTooltip =
-      runKey && this.triggeredReruns.has(runKey)
+      runKey && reruns?.has(runKey)
         ? "Run already triggered"
-        : this.triggeredReruns.size > 0
+        : rerunPending
           ? "A pipeline job is currently running"
           : undefined;
     for (const action of run.actions) {
@@ -788,9 +848,9 @@ export class ChecksFetcher implements ChecksProvider {
         tooltip: rerunTooltip ?? action.tooltip,
         primary: action.primary,
         summary: action.summary,
-        disabled: action.disabled || rerunDisabled,
+        disabled: action.disabled || rerunPending,
         callback: () =>
-          this.rerun(jenkins, repo, action.url + "/index", runKey),
+          this.rerun(jenkins, repo, action.url + "/index", runKey, changeKey),
       });
     }
     convertedRun.actions = actions;
@@ -982,8 +1042,9 @@ export class ChecksFetcher implements ChecksProvider {
     repo: string,
     url: string,
     runKey: string,
+    changeKey: string,
   ): Promise<ActionResult> {
-    if (runKey) this.triggeredReruns.set(runKey, Date.now());
+    if (runKey) this.rerunState(changeKey).set(runKey, performance.now());
     return this.fetchFromJenkins(jenkins, repo, url, "POST")
       .then((_) => {
         return {
