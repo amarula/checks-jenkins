@@ -185,6 +185,12 @@ The `rerun()` method adds the key eagerly on click, under the change the action 
 
 Tooltips explain the reason: `"Run already triggered"` for the specific run, or `"A pipeline job is currently running"` when another run in the same change is active.
 
+### Which clock the TTLs use
+
+Both in-memory TTLs — the rerun state above and the endpoint cooldown — measure elapsed time with `performance.now()`, the monotonic clock. They only ever compare timestamp against timestamp within a single page load, so nothing is lost by not using wall-clock time, while `Date.now()` can step backwards (NTP correction, clock set by hand, restored VM snapshot) and would then leave entries alive long past their TTL — for the rerun state that means buttons that stay absent until a page refresh.
+
+The IndexedDB caches are the opposite case and keep `Date.now()`: a cached entry's `timestamp` is written by one page load and read by the next, so it has to be wall-clock time to remain comparable.
+
 ## CoverageClient (`coverage.ts`)
 
 The coverage subsystem. See [coverage-system.md](coverage-system.md) for a deep dive.

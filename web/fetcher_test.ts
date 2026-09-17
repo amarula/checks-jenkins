@@ -43,12 +43,13 @@ function makeFetcher(): ChecksFetcher {
 const CHANGE_A = "123:1";
 const CHANGE_B = "456:2";
 
-/** Records a pending rerun for a change view, the way a click does. */
+/** Records a pending rerun for a change view, the way a click does.
+ *  Timestamps come from the monotonic clock, as in the fetcher itself. */
 function markRerun(
   fetcher: ChecksFetcher,
   changeKey: string,
   runKey: string,
-  timestamp: number = Date.now(),
+  timestamp: number = performance.now(),
 ) {
   (fetcher as any).rerunState(changeKey).set(runKey, timestamp);
 }
@@ -541,7 +542,7 @@ suite("ChecksFetcher.convert", () => {
     // only runs in fetch().  Convert sees any key in the map regardless
     // of age, which is the safe default (better to keep disabled than
     // accidentally re-enable).
-    const stale = Date.now() - 120_000;
+    const stale = performance.now() - 120_000;
     markRerun(fetcher, CHANGE_A, "stale-job#1", stale);
     const jenkinsRun: JenkinsCheckRun = {
       attempt: 1,
@@ -683,7 +684,7 @@ suite("ChecksFetcher rerun scoping", () => {
   });
 
   test("expired rerun keys are dropped from every change view", () => {
-    const now = Date.now();
+    const now = performance.now();
     markRerun(fetcher, CHANGE_A, "fresh#1", now);
     markRerun(fetcher, CHANGE_A, "stale#2", now - 120_000);
     markRerun(fetcher, CHANGE_B, "stale#3", now - 120_000);

@@ -124,7 +124,12 @@ export class ChecksFetcher implements ChecksProvider {
 
   /** Endpoints that returned 403/error — skipped after {@link UNAVAILABLE_RETRY_BUDGET}
    *  consecutive failures within {@link UNAVAILABLE_TTL_MS}.  The counter
-   *  resets on the first successful request or when the TTL expires. */
+   *  resets on the first successful request or when the TTL expires.
+   *
+   *  Like {@link triggeredReruns}, this in-memory state measures elapsed time
+   *  with the monotonic clock (`performance.now()`): `Date.now()` can step
+   *  backwards (NTP correction, clock set by hand, restored snapshot) and an
+   *  entry stamped before the step would then stay fresh far past its TTL. */
   private unavailableEndpoints: Map<
     string,
     { failures: number; lastFailure: number }
@@ -138,8 +143,10 @@ export class ChecksFetcher implements ChecksProvider {
    *  so entries left behind by a previously displayed change would otherwise
    *  keep the rerun buttons of the next one disabled.
    *
-   *  Each inner map holds runKey → Date.now(). While non-empty, all rerun
-   *  actions of that change are disabled to prevent double-triggering. */
+   *  Each inner map holds runKey → performance.now(). While non-empty, all
+   *  rerun actions of that change are disabled to prevent double-triggering.
+   *  The timestamps only ever measure elapsed time within this page load, so
+   *  they use the monotonic clock — see unavailableEndpoints. */
   private triggeredReruns: Map<string, Map<string, number>> = new Map();
 
   /** Maximum time (ms) a recently-clicked rerun remains disabled while waiting
@@ -179,7 +186,10 @@ export class ChecksFetcher implements ChecksProvider {
     const key = `${jenkinsName}:${endpoint}`;
     const entry = this.unavailableEndpoints.get(key);
     if (!entry) return false;
-    if (Date.now() - entry.lastFailure > ChecksFetcher.UNAVAILABLE_TTL_MS) {
+    if (
+      performance.now() - entry.lastFailure >
+      ChecksFetcher.UNAVAILABLE_TTL_MS
+    ) {
       this.unavailableEndpoints.delete(key);
       return false;
     }
@@ -191,7 +201,7 @@ export class ChecksFetcher implements ChecksProvider {
     const entry = this.unavailableEndpoints.get(key);
     this.unavailableEndpoints.set(key, {
       failures: (entry?.failures ?? 0) + 1,
-      lastFailure: Date.now(),
+      lastFailure: performance.now(),
     });
   }
 
@@ -311,13 +321,17 @@ export class ChecksFetcher implements ChecksProvider {
       ];
       const cachedEntry: CachedRuns | undefined =
         await cacheService.get(runsKey);
-      const now = Date.now();
+      // The cache outlives the page load, so its age is measured with the
+      // wall clock — entry.timestamp was written by an earlier session. The
+      // in-memory rerun state below is the opposite case and uses the
+      // monotonic clock instead.
+      const wallClockNow = Date.now();
       const cacheHit =
         cachedEntry &&
         cachedEntry.runs &&
         Array.isArray(cachedEntry.runs) &&
         cachedEntry.runs.length > 0 &&
-        now - cachedEntry.timestamp < ChecksFetcher.RUNS_CACHE_TTL_MS;
+        wallClockNow - cachedEntry.timestamp < ChecksFetcher.RUNS_CACHE_TTL_MS;
 
       let data: any; // the { runs: JenkinsCheckRun[] } payload we'll process
       let totalRuns: number;
@@ -367,7 +381,10 @@ export class ChecksFetcher implements ChecksProvider {
         // Cache the raw runs for next time (deep-clone before
         // computeTreeNames mutates them in-place).
         const cloned: JenkinsCheckRun[] = structuredClone(data.runs);
-        await cacheService.put(runsKey, { runs: cloned, timestamp: now });
+        await cacheService.put(runsKey, {
+          runs: cloned,
+          timestamp: wallClockNow,
+        });
       }
 
       // Apply flattened-tree naming before enrichment so checkName
@@ -466,14 +483,15 @@ export class ChecksFetcher implements ChecksProvider {
       // RUNNABLE runs are deliberately not tracked: a job that has not started
       // yet must stay triggerable, and the eager add in rerun() already covers
       // the window between a click and Jenkins reporting the build as RUNNING.
+      const monotonicNow = performance.now();
       const reruns = this.rerunState(changeKey);
       for (const run of data.runs) {
         if (run.status === RunStatus.RUNNING) {
           const { runKey } = this.parseExternalId(run.externalId);
-          if (runKey) reruns.set(runKey, now);
+          if (runKey) reruns.set(runKey, monotonicNow);
         }
       }
-      this.expireReruns(now);
+      this.expireReruns(monotonicNow);
 
       for (const run of data.runs) {
         checkRuns.push(this.convert(jenkins, changeData.repo, run, changeKey));
@@ -1026,7 +1044,7 @@ export class ChecksFetcher implements ChecksProvider {
     runKey: string,
     changeKey: string,
   ): Promise<ActionResult> {
-    if (runKey) this.rerunState(changeKey).set(runKey, Date.now());
+    if (runKey) this.rerunState(changeKey).set(runKey, performance.now());
     return this.fetchFromJenkins(jenkins, repo, url, "POST")
       .then((_) => {
         return {
