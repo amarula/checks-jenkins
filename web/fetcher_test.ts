@@ -17,7 +17,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "./test/test-setup";
 import { assert } from "@open-wc/testing";
-import { ChecksFetcher, Config, JenkinsCheckRun } from "./fetcher";
+import {
+  ChecksFetcher,
+  Config,
+  JenkinsAction,
+  JenkinsCheckRun,
+} from "./fetcher";
 import {
   Category,
   RunStatus,
@@ -32,6 +37,20 @@ function makeFetcher(): ChecksFetcher {
       post: () => Promise.resolve(),
     }),
   } as unknown as PluginApi);
+}
+
+/** Change view keys (`change:patchset`) used by the rerun-state tests. */
+const CHANGE_A = "123:1";
+const CHANGE_B = "456:2";
+
+/** Records a pending rerun for a change view, the way a click does. */
+function markRerun(
+  fetcher: ChecksFetcher,
+  changeKey: string,
+  runKey: string,
+  timestamp: number = Date.now(),
+) {
+  (fetcher as any).rerunState(changeKey).set(runKey, timestamp);
 }
 
 function makeTool(
@@ -211,7 +230,12 @@ suite("ChecksFetcher.convert", () => {
       user: "admin",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.equal(result.attempt, 1);
     assert.equal(result.change, 123);
@@ -267,7 +291,12 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.equal(result.actions.length, 1);
     assert.equal(result.actions[0].name, "Rerun");
@@ -303,7 +332,12 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.equal(result.finishedTimestamp.getTime(), new Date(ts).getTime());
     assert.equal(result.startedTimestamp.getTime(), new Date(ts).getTime());
@@ -311,7 +345,7 @@ suite("ChecksFetcher.convert", () => {
   });
 
   test("disables rerun when runKey is in triggeredReruns", () => {
-    (fetcher as any).triggeredReruns.set("test-job#1", Date.now());
+    markRerun(fetcher, CHANGE_A, "test-job#1");
     const jenkinsRun: JenkinsCheckRun = {
       attempt: 1,
       change: 123,
@@ -347,14 +381,19 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.isTrue(result.actions[0].disabled);
     assert.equal(result.actions[0].tooltip, "Run already triggered");
   });
 
   test("disables rerun on all runs when any run is active", () => {
-    (fetcher as any).triggeredReruns.set("other-job#2", Date.now());
+    markRerun(fetcher, CHANGE_A, "other-job#2");
     const jenkinsRun: JenkinsCheckRun = {
       attempt: 1,
       change: 123,
@@ -390,7 +429,12 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.isTrue(result.actions[0].disabled);
     assert.equal(
@@ -435,7 +479,12 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.isFalse(result.actions[0].disabled);
     assert.equal(result.actions[0].tooltip, "Trigger rerun");
@@ -477,7 +526,12 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.isTrue(result.actions[0].disabled);
   });
@@ -488,7 +542,7 @@ suite("ChecksFetcher.convert", () => {
     // of age, which is the safe default (better to keep disabled than
     // accidentally re-enable).
     const stale = Date.now() - 120_000;
-    (fetcher as any).triggeredReruns.set("stale-job#1", stale);
+    markRerun(fetcher, CHANGE_A, "stale-job#1", stale);
     const jenkinsRun: JenkinsCheckRun = {
       attempt: 1,
       change: 123,
@@ -524,9 +578,123 @@ suite("ChecksFetcher.convert", () => {
       user: "",
     };
 
-    const result = (fetcher as any).convert(config, "my-repo", jenkinsRun);
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      jenkinsRun,
+      CHANGE_A,
+    );
 
     assert.isTrue(result.actions[0].disabled);
+  });
+});
+
+suite("ChecksFetcher rerun scoping", () => {
+  let fetcher: ChecksFetcher;
+
+  function makeAction(overrides: Partial<JenkinsAction> = {}): JenkinsAction {
+    return {
+      name: "Rerun",
+      tooltip: "Trigger rerun",
+      primary: true,
+      summary: false,
+      disabled: false,
+      method: "POST",
+      data: "",
+      url: "http://jenkins/job/build",
+      ...overrides,
+    };
+  }
+
+  function makeRun(overrides: Partial<JenkinsCheckRun> = {}): JenkinsCheckRun {
+    return {
+      attempt: 1,
+      change: 123,
+      checkDescription: "",
+      checkLink: "",
+      checkName: "Test",
+      externalId: "test-job#1",
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results: [],
+      scheduledTimestamp: "2024-06-15T10:00:00Z",
+      startedTimestamp: "2024-06-15T10:00:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "",
+      statusLink: "",
+      actions: [makeAction()],
+      ...overrides,
+    };
+  }
+
+  const config: Config = {
+    name: "my-jenkins",
+    url: "http://jenkins",
+    user: "admin",
+  };
+
+  setup(() => {
+    fetcher = makeFetcher();
+  });
+
+  test("a rerun in another change does not hide this change's buttons", () => {
+    // The fetcher outlives the change view, so state left behind by the
+    // previously displayed change must not disable — and thereby hide — the
+    // actions of the change being displayed now.
+    markRerun(fetcher, CHANGE_B, "other-job#2");
+
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      makeRun(),
+      CHANGE_A,
+    );
+
+    assert.isFalse(result.actions[0].disabled);
+    assert.equal(result.actions[0].tooltip, "Trigger rerun");
+  });
+
+  test("a rerun in another patchset does not hide this patchset's buttons", () => {
+    markRerun(fetcher, "123:1", "test-job#1");
+
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      makeRun(),
+      "123:2",
+    );
+
+    assert.isFalse(result.actions[0].disabled);
+  });
+
+  test("rerun click is recorded under its own change", async () => {
+    const result = (fetcher as any).convert(
+      config,
+      "my-repo",
+      makeRun(),
+      CHANGE_A,
+    );
+
+    await result.actions[0].callback();
+
+    assert.isTrue((fetcher as any).rerunState(CHANGE_A).has("test-job#1"));
+    assert.isUndefined((fetcher as any).triggeredReruns.get(CHANGE_B));
+  });
+
+  test("expired rerun keys are dropped from every change view", () => {
+    const now = Date.now();
+    markRerun(fetcher, CHANGE_A, "fresh#1", now);
+    markRerun(fetcher, CHANGE_A, "stale#2", now - 120_000);
+    markRerun(fetcher, CHANGE_B, "stale#3", now - 120_000);
+
+    (fetcher as any).expireReruns(now);
+
+    const state = (fetcher as any).triggeredReruns.get(CHANGE_A);
+    assert.isTrue(state.has("fresh#1"));
+    assert.isFalse(state.has("stale#2"));
+    // A change view emptied by the expiry is forgotten, not kept around.
+    assert.isUndefined((fetcher as any).triggeredReruns.get(CHANGE_B));
   });
 });
 

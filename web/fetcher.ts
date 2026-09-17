@@ -130,10 +130,17 @@ export class ChecksFetcher implements ChecksProvider {
     { failures: number; lastFailure: number }
   > = new Map();
 
-  /** RunKeys that the user has clicked rerun on, or that are currently RUNNING/RUNNABLE.
-   *  Maps key to the timestamp (Date.now()) when it was added. While non-empty,
-   *  all rerun actions are disabled to prevent double-triggering. */
-  private triggeredReruns: Map<string, number> = new Map();
+  /** RunKeys that the user has clicked rerun on, or that are currently RUNNING,
+   *  grouped by the change view they belong to (`change:patchset`).
+   *
+   *  The grouping matters: the fetcher instance outlives the change view (the
+   *  plugin is installed once per page load and Gerrit is a single-page app),
+   *  so entries left behind by a previously displayed change would otherwise
+   *  keep the rerun buttons of the next one disabled.
+   *
+   *  Each inner map holds runKey → Date.now(). While non-empty, all rerun
+   *  actions of that change are disabled to prevent double-triggering. */
+  private triggeredReruns: Map<string, Map<string, number>> = new Map();
 
   /** Maximum time (ms) a recently-clicked rerun remains disabled while waiting
    *  for Jenkins to update its status to RUNNING. */
@@ -275,6 +282,9 @@ export class ChecksFetcher implements ChecksProvider {
         runs: [],
       };
     }
+    // Rerun state belongs to the change view being fetched, never to the
+    // fetcher instance as a whole — see triggeredReruns.
+    const changeKey = ChecksFetcher.changeKeyOf(changeData);
     const checkRuns: CheckRun[] = [];
     for (const jenkins of this.configs) {
       const checks_url = `${jenkins.url}/gerrit-checks/runs?change=${changeData.changeNumber}&patchset=${changeData.patchsetNumber}`;
@@ -448,28 +458,25 @@ export class ChecksFetcher implements ChecksProvider {
         checkRuns.push(...cachedData);
       }
 
-      // Sync triggeredReruns from current run statuses:
-      //  - RUNNING/RUNNABLE runs add/refresh their keys with a fresh timestamp.
+      // Sync the rerun state of this change view from the runs just fetched:
+      //  - RUNNING runs add/refresh their keys with a fresh timestamp.
       //  - Keys added by user clicks survive the shouldReload re-fetch gap
       //    (Jenkins may not have queued the job yet) via a TTL.
-      //  - Keys whose TTL has expired with no active run are removed.
+      //  - Keys whose TTL has expired are removed, in every change view.
+      // RUNNABLE runs are deliberately not tracked: a job that has not started
+      // yet must stay triggerable, and the eager add in rerun() already covers
+      // the window between a click and Jenkins reporting the build as RUNNING.
+      const reruns = this.rerunState(changeKey);
       for (const run of data.runs) {
-        if (
-          run.status === RunStatus.RUNNING ||
-          run.status === RunStatus.RUNNABLE
-        ) {
+        if (run.status === RunStatus.RUNNING) {
           const { runKey } = this.parseExternalId(run.externalId);
-          if (runKey) this.triggeredReruns.set(runKey, now);
+          if (runKey) reruns.set(runKey, now);
         }
       }
-      for (const [k, ts] of this.triggeredReruns) {
-        if (now - ts > ChecksFetcher.RERUN_DISABLE_TTL_MS) {
-          this.triggeredReruns.delete(k);
-        }
-      }
+      this.expireReruns(now);
 
       for (const run of data.runs) {
-        checkRuns.push(this.convert(jenkins, changeData.repo, run));
+        checkRuns.push(this.convert(jenkins, changeData.repo, run, changeKey));
       }
     }
 
@@ -753,7 +760,39 @@ export class ChecksFetcher implements ChecksProvider {
       );
   }
 
-  convert(jenkins: Config, repo: string, run: JenkinsCheckRun): CheckRun {
+  /** Identifies the change view (change + patchset) a rerun state belongs to. */
+  private static changeKeyOf(changeData: ChangeData): string {
+    return `${changeData.changeNumber}:${changeData.patchsetNumber}`;
+  }
+
+  /** The pending-rerun state of one change view, created on first use. */
+  private rerunState(changeKey: string): Map<string, number> {
+    let state = this.triggeredReruns.get(changeKey);
+    if (state === undefined) {
+      state = new Map<string, number>();
+      this.triggeredReruns.set(changeKey, state);
+    }
+    return state;
+  }
+
+  /** Drops rerun keys older than the TTL, and the change views left empty. */
+  private expireReruns(now: number): void {
+    for (const [changeKey, state] of this.triggeredReruns) {
+      for (const [runKey, ts] of state) {
+        if (now - ts > ChecksFetcher.RERUN_DISABLE_TTL_MS) {
+          state.delete(runKey);
+        }
+      }
+      if (state.size === 0) this.triggeredReruns.delete(changeKey);
+    }
+  }
+
+  convert(
+    jenkins: Config,
+    repo: string,
+    run: JenkinsCheckRun,
+    changeKey: string,
+  ): CheckRun {
     const convertedRun: CheckRun = {
       attempt: run.attempt,
       change: run.change,
@@ -773,13 +812,16 @@ export class ChecksFetcher implements ChecksProvider {
     };
     const actions: Action[] = [];
     const { runKey } = this.parseExternalId(run.externalId);
-    const rerunDisabled = runKey
-      ? this.triggeredReruns.has(runKey) || this.triggeredReruns.size > 0
-      : this.triggeredReruns.size > 0;
+    // While a rerun of this change is pending, every action of the change is
+    // disabled: Gerrit renders no button at all for a disabled action, which is
+    // what keeps a second click from racing the first one before Jenkins
+    // reports the new build as RUNNING.
+    const reruns = this.triggeredReruns.get(changeKey);
+    const rerunPending = (reruns?.size ?? 0) > 0;
     const rerunTooltip =
-      runKey && this.triggeredReruns.has(runKey)
+      runKey && reruns?.has(runKey)
         ? "Run already triggered"
-        : this.triggeredReruns.size > 0
+        : rerunPending
           ? "A pipeline job is currently running"
           : undefined;
     for (const action of run.actions) {
@@ -788,9 +830,9 @@ export class ChecksFetcher implements ChecksProvider {
         tooltip: rerunTooltip ?? action.tooltip,
         primary: action.primary,
         summary: action.summary,
-        disabled: action.disabled || rerunDisabled,
+        disabled: action.disabled || rerunPending,
         callback: () =>
-          this.rerun(jenkins, repo, action.url + "/index", runKey),
+          this.rerun(jenkins, repo, action.url + "/index", runKey, changeKey),
       });
     }
     convertedRun.actions = actions;
@@ -982,8 +1024,9 @@ export class ChecksFetcher implements ChecksProvider {
     repo: string,
     url: string,
     runKey: string,
+    changeKey: string,
   ): Promise<ActionResult> {
-    if (runKey) this.triggeredReruns.set(runKey, Date.now());
+    if (runKey) this.rerunState(changeKey).set(runKey, Date.now());
     return this.fetchFromJenkins(jenkins, repo, url, "POST")
       .then((_) => {
         return {
