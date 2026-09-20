@@ -16,10 +16,10 @@ package com.google.gerrit.plugins.checks.jenkins;
 
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.extensions.restapi.BadRequestException;
-import com.google.gerrit.plugins.checks.jenkins.ProxyTriggerAction.ProxyInput;
 import com.google.gerrit.extensions.restapi.Response;
 import com.google.gerrit.extensions.restapi.RestApiException;
 import com.google.gerrit.extensions.restapi.RestModifyView;
+import com.google.gerrit.plugins.checks.jenkins.ProxyTriggerAction.ProxyInput;
 import com.google.gerrit.plugins.checks.jenkins.JenkinsConfig.Resolved;
 import com.google.gerrit.server.project.ProjectResource;
 import com.google.inject.Inject;
@@ -31,8 +31,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.time.Duration;
+import java.util.Base64;
 
 @Singleton
 public class ProxyTriggerAction implements RestModifyView<ProjectResource, ProxyInput> {
