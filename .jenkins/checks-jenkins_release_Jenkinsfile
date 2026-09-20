@@ -3,6 +3,8 @@
 @Library('repo_jenkins_lib')
 import com.amarula.build.Build
 import com.amarula.ui.Ui
+@Library('changelog_jenkins_lib')
+import com.amarula.changelog.Changelog
 
 node('android-build') {
     def dockerImage = 'gerrit-plugin-builder:1.0'
@@ -59,6 +61,11 @@ node('android-build') {
                             script: 'git rev-parse HEAD'
                         ).trim()
                     }
+                    def fromRef = """git describe --abbrev=0 --tags HEAD^"""
+                    def changeLog = new Changelog()
+                    String commit = changeLog.getCommitRef(this, fromRef)
+                    collectGit(path: ".", markedCommit: commit, changelog: true)
+
                     sh """#!/bin/bash -el
                         # Jenkins (via the Build class) checks the plugin
                         # out into a subdirectory of WORKSPACE named after the
