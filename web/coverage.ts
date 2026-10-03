@@ -33,7 +33,7 @@ import {
   ChangeInfo,
   RevisionInfo,
 } from "@gerritcodereview/typescript-api/rest-api";
-import { Config } from "./fetcher";
+import { Config, isStageRunId } from "./fetcher";
 import { CoverageCacheKey } from "./index-db";
 import { coverageCacheService } from "./request-cache-service";
 
@@ -75,6 +75,7 @@ declare interface JenkinsRunEntry {
   status: string;
   statusLink: string;
   attempt: number;
+  externalId: string;
 }
 
 /** A completed Jenkins run that has coverage data. */
@@ -499,7 +500,12 @@ export class CoverageClient {
       return [];
 
     return (data.runs as JenkinsRunEntry[])
-      .filter((r) => r.status === "COMPLETED" && r.statusLink)
+      // A stage of a pipeline shares the statusLink of the pipeline it belongs
+      // to, so it would report the same coverage over and over again.
+      .filter(
+        (r) =>
+          r.status === "COMPLETED" && r.statusLink && !isStageRunId(r.externalId),
+      )
       .map((r) => ({ statusLink: r.statusLink, attempt: r.attempt }))
       .sort((a, b) => b.attempt - a.attempt);
   }

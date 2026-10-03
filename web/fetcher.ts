@@ -402,7 +402,7 @@ export class ChecksFetcher implements ChecksProvider {
       // Skip entirely if the endpoint was already marked unavailable on a prior poll.
       const completedRuns = data.runs.filter(
         (run: JenkinsCheckRun) =>
-          run.status === RunStatus.COMPLETED && !this.isStageRun(run),
+          run.status === RunStatus.COMPLETED && !isStageRunId(run.externalId),
       );
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
         await Promise.all(
@@ -488,7 +488,7 @@ export class ChecksFetcher implements ChecksProvider {
       const reruns = this.rerunState(changeKey);
       for (const run of data.runs) {
         if (run.status === RunStatus.RUNNING) {
-          const { runKey } = this.parseExternalId(run.externalId);
+          const { runKey } = parseExternalId(run.externalId);
           if (runKey) reruns.set(runKey, monotonicNow);
         }
       }
@@ -830,7 +830,7 @@ export class ChecksFetcher implements ChecksProvider {
       statusLink: run.statusLink,
     };
     const actions: Action[] = [];
-    const { runKey } = this.parseExternalId(run.externalId);
+    const { runKey } = parseExternalId(run.externalId);
     // While a rerun of this change is pending, every action of the change is
     // disabled: Gerrit renders no button at all for a disabled action, which is
     // what keeps a second click from racing the first one before Jenkins
@@ -859,44 +859,6 @@ export class ChecksFetcher implements ChecksProvider {
   }
 
   /**
-   * Parses a Jenkins externalId into its {runKey, parentKey} components.
-   *
-   * Downstream runs carry a JSON object: {"parent":"upstreamJob#N","run":"thisJob#M"}.
-   * Direct runs are plain strings: "jobFullName#buildNumber".
-   */
-  private parseExternalId(externalId: string | undefined): {
-    runKey: string;
-    parentKey: string | null;
-  } {
-    if (!externalId) return { runKey: "", parentKey: null };
-    try {
-      const parsed = JSON.parse(externalId);
-      if (parsed.parent && parsed.run) {
-        return {
-          runKey: parsed.run as string,
-          parentKey: parsed.parent as string,
-        };
-      }
-    } catch {}
-    return { runKey: externalId, parentKey: null };
-  }
-
-  /**
-   * A stage of a pipeline is reported as a check run of its own, nested below
-   * the run of the pipeline. Its run key is the key of that run followed by '#'
-   * and the ID of the stage's flow node:
-   *
-   *   '{"parent":"my-pipeline#7","run":"my-pipeline#7#12"}'
-   *
-   * A downstream run is nested as well, but its run key is a run of its own,
-   * e.g. '{"parent":"trigger-job#5","run":"downstream-job#3"}'.
-   */
-  private isStageRun(run: JenkinsCheckRun): boolean {
-    const { runKey, parentKey } = this.parseExternalId(run.externalId);
-    return !!parentKey && runKey.startsWith(`${parentKey}#`);
-  }
-
-  /**
    * Rewrites checkName on every run in-place to a flattened-tree label:
    *
    *   {depth+1 padded} {🌳|🍃} {originalName}
@@ -916,7 +878,7 @@ export class ChecksFetcher implements ChecksProvider {
     if (!runs || runs.length === 0) return;
 
     // 1. Parse every externalId
-    const parsed = runs.map((r) => this.parseExternalId(r.externalId));
+    const parsed = runs.map((r) => parseExternalId(r.externalId));
 
     // 2. Build lookup structures
     const parentMap = new Map<string, string | null>(); // runKey → parentKey
@@ -1080,4 +1042,46 @@ export class ChecksFetcher implements ChecksProvider {
         return { message: `Triggering the run failed: ${e.message}` };
       });
   }
+}
+
+/**
+ * Parses a Jenkins externalId into its {runKey, parentKey} components.
+ *
+ * Downstream runs carry a JSON object: {"parent":"upstreamJob#N","run":"thisJob#M"}.
+ * Direct runs are plain strings: "jobFullName#buildNumber".
+ */
+export function parseExternalId(externalId: string | undefined): {
+  runKey: string;
+  parentKey: string | null;
+} {
+  if (!externalId) return { runKey: "", parentKey: null };
+  try {
+    const parsed = JSON.parse(externalId);
+    if (parsed.parent && parsed.run) {
+      return {
+        runKey: parsed.run as string,
+        parentKey: parsed.parent as string,
+      };
+    }
+  } catch {}
+  return { runKey: externalId, parentKey: null };
+}
+
+/**
+ * A stage of a pipeline is reported as a check run of its own, nested below the
+ * run of the pipeline. Its run key is the key of that run followed by '#' and
+ * the ID of the stage's flow node:
+ *
+ *   '{"parent":"my-pipeline#7","run":"my-pipeline#7#12"}'
+ *
+ * A downstream run is nested as well, but its run key is a run of its own, e.g.
+ * '{"parent":"trigger-job#5","run":"downstream-job#3"}'.
+ *
+ * A stage is not a build of its own: it shares the statusLink of the pipeline it
+ * belongs to, so build level data, e.g. coverage or warnings, must not be
+ * fetched once per stage.
+ */
+export function isStageRunId(externalId: string | undefined): boolean {
+  const { runKey, parentKey } = parseExternalId(externalId);
+  return !!parentKey && runKey.startsWith(`${parentKey}#`);
 }

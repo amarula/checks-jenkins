@@ -669,3 +669,81 @@ suite("classifyPatchCoverage", () => {
     assert.equal(classifyPatchCoverage(undefined, false), Category.INFO);
   });
 });
+
+suite("CoverageClient.findCompletedRuns", () => {
+  let client: CoverageClient;
+
+  const jenkins = {
+    name: "my-jenkins",
+    url: "http://jenkins",
+    user: "",
+  };
+
+  function stubRuns(runs: unknown[]): void {
+    (client as any).fetchFromJenkins = () => Promise.resolve({});
+    (client as any).toJson = () => Promise.resolve({ runs });
+  }
+
+  setup(() => {
+    client = new CoverageClient({} as unknown as PluginApi);
+  });
+
+  test("a completed run is used to fetch the coverage", async () => {
+    stubRuns([
+      {
+        status: "COMPLETED",
+        statusLink: "http://jenkins/job/build/1/",
+        attempt: 1,
+        externalId: "build#1",
+      },
+    ]);
+
+    const runs = await (client as any).findCompletedRuns(jenkins, "repo", 1, 1);
+
+    assert.deepEqual(runs, [
+      { statusLink: "http://jenkins/job/build/1/", attempt: 1 },
+    ]);
+  });
+
+  test("stage runs are not, they share the statusLink of their run", async () => {
+    stubRuns([
+      {
+        status: "COMPLETED",
+        statusLink: "http://jenkins/job/build/1/",
+        attempt: 1,
+        externalId: "build#1",
+      },
+      {
+        status: "COMPLETED",
+        statusLink: "http://jenkins/job/build/1/",
+        attempt: 1,
+        externalId: '{"parent":"build#1","run":"build#1#12"}',
+      },
+      {
+        status: "COMPLETED",
+        statusLink: "http://jenkins/job/build/1/",
+        attempt: 1,
+        externalId: '{"parent":"build#1","run":"build#1#27"}',
+      },
+    ]);
+
+    const runs = await (client as any).findCompletedRuns(jenkins, "repo", 1, 1);
+
+    assert.equal(runs.length, 1, "One coverage run, not one per stage");
+  });
+
+  test("a downstream run is used, it is a build of its own", async () => {
+    stubRuns([
+      {
+        status: "COMPLETED",
+        statusLink: "http://jenkins/job/downstream/3/",
+        attempt: 1,
+        externalId: '{"parent":"build#1","run":"downstream#3"}',
+      },
+    ]);
+
+    const runs = await (client as any).findCompletedRuns(jenkins, "repo", 1, 1);
+
+    assert.equal(runs.length, 1);
+  });
+});

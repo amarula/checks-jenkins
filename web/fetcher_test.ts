@@ -22,6 +22,7 @@ import {
   Config,
   JenkinsAction,
   JenkinsCheckRun,
+  isStageRunId,
 } from "./fetcher";
 import {
   Category,
@@ -977,8 +978,6 @@ suite("ChecksFetcher tree naming", () => {
 });
 
 suite("ChecksFetcher stage runs", () => {
-  let fetcher: ChecksFetcher;
-
   function makeRun(overrides: Partial<JenkinsCheckRun> = {}): JenkinsCheckRun {
     return {
       attempt: 1,
@@ -1001,20 +1000,12 @@ suite("ChecksFetcher stage runs", () => {
     };
   }
 
-  function isStageRun(run: JenkinsCheckRun): boolean {
-    return (fetcher as any).isStageRun(run);
-  }
-
-  setup(() => {
-    fetcher = makeFetcher();
-  });
-
   test("a stage of a direct run is a stage run", () => {
     const run = makeRun({
       externalId: '{"parent":"my-pipeline#7","run":"my-pipeline#7#12"}',
     });
 
-    assert.isTrue(isStageRun(run));
+    assert.isTrue(isStageRunId(run.externalId));
   });
 
   test("a stage of a downstream run is a stage run", () => {
@@ -1023,11 +1014,11 @@ suite("ChecksFetcher stage runs", () => {
         '{"parent":"downstream-job#3","run":"downstream-job#3#12"}',
     });
 
-    assert.isTrue(isStageRun(run));
+    assert.isTrue(isStageRunId(run.externalId));
   });
 
   test("a run triggered by Gerrit is not a stage run", () => {
-    assert.isFalse(isStageRun(makeRun({ externalId: "my-pipeline#7" })));
+    assert.isFalse(isStageRunId(makeRun({ externalId: "my-pipeline#7" }).externalId));
   });
 
   test("a downstream run is not a stage run", () => {
@@ -1035,10 +1026,10 @@ suite("ChecksFetcher stage runs", () => {
       externalId: '{"parent":"trigger-job#5","run":"downstream-job#3"}',
     });
 
-    assert.isFalse(isStageRun(run));
+    assert.isFalse(isStageRunId(run.externalId));
   });
 
   test("a run without an id is not a stage run", () => {
-    assert.isFalse(isStageRun(makeRun({ externalId: "" })));
+    assert.isFalse(isStageRunId(makeRun({ externalId: "" }).externalId));
   });
 });
