@@ -401,7 +401,8 @@ export class ChecksFetcher implements ChecksProvider {
       // Phase A: Enrich error results with explanations (parallel across runs).
       // Skip entirely if the endpoint was already marked unavailable on a prior poll.
       const completedRuns = data.runs.filter(
-        (run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED,
+        (run: JenkinsCheckRun) =>
+          run.status === RunStatus.COMPLETED && !this.isStageRun(run),
       );
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
         await Promise.all(
@@ -878,6 +879,21 @@ export class ChecksFetcher implements ChecksProvider {
       }
     } catch {}
     return { runKey: externalId, parentKey: null };
+  }
+
+  /**
+   * A stage of a pipeline is reported as a check run of its own, nested below
+   * the run of the pipeline. Its run key is the key of that run followed by '#'
+   * and the ID of the stage's flow node:
+   *
+   *   '{"parent":"my-pipeline#7","run":"my-pipeline#7#12"}'
+   *
+   * A downstream run is nested as well, but its run key is a run of its own,
+   * e.g. '{"parent":"trigger-job#5","run":"downstream-job#3"}'.
+   */
+  private isStageRun(run: JenkinsCheckRun): boolean {
+    const { runKey, parentKey } = this.parseExternalId(run.externalId);
+    return !!parentKey && runKey.startsWith(`${parentKey}#`);
   }
 
   /**

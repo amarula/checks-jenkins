@@ -975,3 +975,70 @@ suite("ChecksFetcher tree naming", () => {
     assert.equal(runs[5].checkName, `02 ${LEAF} Tree2-Leaf`);
   });
 });
+
+suite("ChecksFetcher stage runs", () => {
+  let fetcher: ChecksFetcher;
+
+  function makeRun(overrides: Partial<JenkinsCheckRun> = {}): JenkinsCheckRun {
+    return {
+      attempt: 1,
+      change: 123,
+      checkDescription: "",
+      checkLink: "",
+      checkName: "Test",
+      externalId: "",
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results: [],
+      scheduledTimestamp: "2024-06-15T10:00:00Z",
+      startedTimestamp: "2024-06-15T10:00:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "",
+      statusLink: "",
+      actions: [],
+      ...overrides,
+    };
+  }
+
+  function isStageRun(run: JenkinsCheckRun): boolean {
+    return (fetcher as any).isStageRun(run);
+  }
+
+  setup(() => {
+    fetcher = makeFetcher();
+  });
+
+  test("a stage of a direct run is a stage run", () => {
+    const run = makeRun({
+      externalId: '{"parent":"my-pipeline#7","run":"my-pipeline#7#12"}',
+    });
+
+    assert.isTrue(isStageRun(run));
+  });
+
+  test("a stage of a downstream run is a stage run", () => {
+    const run = makeRun({
+      externalId:
+        '{"parent":"downstream-job#3","run":"downstream-job#3#12"}',
+    });
+
+    assert.isTrue(isStageRun(run));
+  });
+
+  test("a run triggered by Gerrit is not a stage run", () => {
+    assert.isFalse(isStageRun(makeRun({ externalId: "my-pipeline#7" })));
+  });
+
+  test("a downstream run is not a stage run", () => {
+    const run = makeRun({
+      externalId: '{"parent":"trigger-job#5","run":"downstream-job#3"}',
+    });
+
+    assert.isFalse(isStageRun(run));
+  });
+
+  test("a run without an id is not a stage run", () => {
+    assert.isFalse(isStageRun(makeRun({ externalId: "" })));
+  });
+});
