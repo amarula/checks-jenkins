@@ -1033,3 +1033,145 @@ suite("ChecksFetcher stage runs", () => {
     assert.isFalse(isStageRunId(makeRun({ externalId: "" }).externalId));
   });
 });
+
+suite("ChecksFetcher.fetch of a pipeline with stages", () => {
+  /**
+   * The runs a Jenkins plugin reports for a pipeline: the run itself and one
+   * run per stage, each nested below the run through its externalId.
+   */
+  const RUNS = [
+    {
+      attempt: 1,
+      change: 4711,
+      checkDescription: "",
+      checkLink: "http://jenkins/job/build/7/",
+      checkName: "build",
+      externalId: "build#7",
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results: [{category: "SUCCESS", summary: "", externalId: "build#7"}],
+      scheduledTimestamp: "2024-06-15T10:00:00Z",
+      startedTimestamp: "2024-06-15T10:00:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "stable",
+      statusLink: "http://jenkins/job/build/7/",
+      actions: [],
+    },
+    ...["12", "27"].map((nodeId) => ({
+      attempt: 1,
+      change: 4711,
+      checkDescription: "",
+      checkLink: "http://jenkins/job/build/7/stages/?selected-node=" + nodeId,
+      checkName: "stage-" + nodeId,
+      externalId:
+        '{"parent":"build#7","run":"build#7#' + nodeId + '"}',
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results: [
+        {category: "SUCCESS", summary: "", externalId: "build#7#" + nodeId},
+      ],
+      scheduledTimestamp: "2024-06-15T10:00:00Z",
+      startedTimestamp: "2024-06-15T10:00:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "stable",
+      statusLink: "http://jenkins/job/build/7/",
+      actions: [],
+    })),
+  ];
+
+  const WARNINGS_TOOLS = {
+    tools: [
+      {
+        id: "lint",
+        name: "Lint warnings",
+        latestUrl: "http://jenkins/job/build/7/warnings-ng/lint",
+        size: 1,
+        errorSize: 0,
+        highSize: 0,
+      },
+    ],
+  };
+
+  const WARNINGS_ISSUES = {
+    issues: [
+      {
+        message: "unused variable",
+        toString: "unused variable",
+        severity: "LOW",
+        fileName: "a.c",
+        lineStart: 3,
+        columnStart: 1,
+        lineEnd: 3,
+        columnEnd: 2,
+      },
+    ],
+  };
+
+  let fetcher: ChecksFetcher;
+  let warningsRequests: string[];
+
+  function stubJenkins(runs: unknown[]): void {
+    (fetcher as any).fetchConfig = () =>
+      Promise.resolve([{name: "my-jenkins", url: "http://jenkins", user: ""}]);
+    (fetcher as any).toJson = (response: unknown) => Promise.resolve(response);
+    (fetcher as any).fetchFromJenkins = (
+      _jenkins: unknown,
+      _repo: string,
+      url: string,
+    ) => {
+      if (url.includes("gerrit-checks/runs")) return Promise.resolve({runs});
+      if (url.includes("warnings-ng/api/json")) {
+        warningsRequests.push(url);
+        return Promise.resolve(WARNINGS_TOOLS);
+      }
+      if (url.includes("/all/api/json")) {
+        return Promise.resolve(WARNINGS_ISSUES);
+      }
+      // error-explanation, testReport, ...
+      return Promise.resolve(null);
+    };
+  }
+
+  async function fetchRuns(changeNumber: number) {
+    return fetcher.fetch({
+      changeNumber,
+      patchsetNumber: 1,
+      commitMessage: "subject",
+      repo: "repo",
+    } as any);
+  }
+
+  function warningsRuns(runs: {checkName: string}[] | undefined): unknown[] {
+    return (runs ?? []).filter((run) => run.checkName === "Lint warnings");
+  }
+
+  setup(() => {
+    fetcher = makeFetcher();
+    warningsRequests = [];
+  });
+
+  test("the warnings of a build are fetched once, not once per stage", async () => {
+    stubJenkins(RUNS);
+
+    const result = await fetchRuns(4711);
+
+    assert.equal(
+      warningsRequests.length,
+      1,
+      "One request for the build, not one per stage run",
+    );
+    assert.equal(warningsRuns(result.runs).length, 1);
+  });
+
+  test("a further poll does not report the warnings again", async () => {
+    stubJenkins(RUNS);
+
+    await fetchRuns(4711);
+    const second = await fetchRuns(4711);
+
+    assert.equal(warningsRuns(second.runs).length, 1);
+  });
+});
+
