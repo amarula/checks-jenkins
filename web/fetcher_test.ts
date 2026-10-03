@@ -22,6 +22,7 @@ import {
   Config,
   JenkinsAction,
   JenkinsCheckRun,
+  countBuilds,
   isStageRunId,
 } from "./fetcher";
 import {
@@ -1172,6 +1173,67 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
     const second = await fetchRuns(4711);
 
     assert.equal(warningsRuns(second.runs).length, 1);
+  });
+});
+
+suite("ChecksFetcher build count", () => {
+  function makeRun(overrides: Partial<JenkinsCheckRun> = {}): JenkinsCheckRun {
+    return {
+      attempt: 1,
+      change: 123,
+      checkDescription: "",
+      checkLink: "",
+      checkName: "Test",
+      externalId: "",
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results: [],
+      scheduledTimestamp: "2024-06-15T10:00:00Z",
+      startedTimestamp: "2024-06-15T10:00:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "",
+      statusLink: "",
+      actions: [],
+      ...overrides,
+    };
+  }
+
+  function stageRun(runKey: string, nodeId: string): JenkinsCheckRun {
+    return makeRun({
+      checkName: "stage-" + nodeId,
+      externalId: `{"parent":"${runKey}","run":"${runKey}#${nodeId}"}`,
+    });
+  }
+
+  test("counts a build without its stages", () => {
+    const runs = [
+      makeRun({ externalId: "build#7" }),
+      stageRun("build#7", "12"),
+      stageRun("build#7", "27"),
+    ];
+
+    assert.equal(countBuilds(runs), 1);
+  });
+
+  test("is stable while the stages of a build appear", () => {
+    const build = makeRun({ externalId: "build#7" });
+
+    assert.equal(countBuilds([build, stageRun("build#7", "12")]), 1);
+    assert.equal(
+      countBuilds([build, stageRun("build#7", "12"), stageRun("build#7", "27")]),
+      1,
+    );
+  });
+
+  test("counts a downstream run, it is a build of its own", () => {
+    const runs = [
+      makeRun({ externalId: "build#7" }),
+      makeRun({ externalId: '{"parent":"build#7","run":"downstream#3"}' }),
+      stageRun("downstream#3", "4"),
+    ];
+
+    assert.equal(countBuilds(runs), 2);
   });
 });
 

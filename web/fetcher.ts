@@ -334,12 +334,12 @@ export class ChecksFetcher implements ChecksProvider {
         wallClockNow - cachedEntry.timestamp < ChecksFetcher.RUNS_CACHE_TTL_MS;
 
       let data: any; // the { runs: JenkinsCheckRun[] } payload we'll process
-      let totalRuns: number;
+      let buildCount: number;
 
       if (cacheHit) {
         // Serve cached runs immediately; refresh in background.
         data = { runs: cachedEntry!.runs };
-        totalRuns = cachedEntry!.runs.length;
+        buildCount = countBuilds(cachedEntry!.runs);
         // Clone before computeTreeNames mutates checkName in-place —
         // backgroundUpdateRuns needs the originals for comparison.
         this.backgroundUpdateRuns(
@@ -373,8 +373,8 @@ export class ChecksFetcher implements ChecksProvider {
         if (!data?.runs || !Array.isArray(data.runs)) {
           continue;
         }
-        totalRuns = data.runs.length;
-        if (totalRuns === 0) {
+        buildCount = countBuilds(data.runs);
+        if (buildCount === 0) {
           continue;
         }
 
@@ -391,11 +391,13 @@ export class ChecksFetcher implements ChecksProvider {
       // carries the depth and emoji prefix for all downstream consumers.
       this.computeTreeNames(data.runs);
 
+      // Keyed by the number of builds: the stages of a running pipeline come
+      // and go, and must not invalidate the cached build level data.
       const key: RequestKey = [
         jenkins.name,
         changeData.changeNumber,
         changeData.patchsetNumber,
-        totalRuns,
+        buildCount,
       ];
 
       // Phase A: Enrich error results with explanations (parallel across runs).
@@ -1084,4 +1086,14 @@ export function parseExternalId(externalId: string | undefined): {
 export function isStageRunId(externalId: string | undefined): boolean {
   const { runKey, parentKey } = parseExternalId(externalId);
   return !!parentKey && runKey.startsWith(`${parentKey}#`);
+}
+
+/**
+ * The number of runs that are builds, i.e. without the stages a pipeline reports
+ * as check runs of their own. Used as part of the cache key of the build level
+ * data, e.g. the warnings, so that a stage appearing while a build is running
+ * does not invalidate it.
+ */
+export function countBuilds(runs: JenkinsCheckRun[]): number {
+  return runs.filter((run) => !isStageRunId(run.externalId)).length;
 }
