@@ -107,9 +107,23 @@ interface AnalysisReport {
   issues: AnalysisIssue[];
 }
 
-interface ErrorResponse {
+/**
+ * What the error explanation plugin reports for a failed build. Only
+ * `explanation` is reported by older versions of the plugin.
+ */
+export interface ErrorResponse {
   _class: string;
   explanation?: string;
+  /** Short summary of the error, replacing the first line of the explanation. */
+  errorSummary?: string;
+  resolutionSteps?: string[];
+  bestPractices?: string[];
+  providerName?: string;
+  providerModel?: string;
+  /** Where the error was reported, e.g. the stage that produced it. */
+  urlString?: string;
+  errorSignature?: string;
+  timestamp?: string;
 }
 
 interface CachedRuns {
@@ -409,27 +423,30 @@ export class ChecksFetcher implements ChecksProvider {
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
         await Promise.all(
           completedRuns.map(async (run: JenkinsCheckRun) => {
-            if (!run.results) run.results = [];
-            const errorResult = run.results.find(
-              (result: CheckResult) => result.category === Category.ERROR,
-            );
+            const errorResult = findErrorResult(run);
             if (!errorResult) return;
-            const errorMessage = await this.explainBuildFailure(
+            const explanation = await this.explainBuildFailure(
               jenkins,
               changeData,
               run.statusLink,
             );
-            if (errorMessage) {
-              const lines = errorMessage.split("\n");
-              const parsedSummary = lines[0].trim();
-              const detailedMessage = lines.slice(1).join("\n").trim();
-              const markdownMessage = detailedMessage
-                ? `\`\`\`text\n${detailedMessage}\n\`\`\``
-                : "No additional details provided.";
-              errorResult.summary = parsedSummary;
-              errorResult.message = markdownMessage;
-              run.statusDescription = parsedSummary;
+            const rendered = renderExplanation(explanation, run.startedTimestamp);
+            if (!rendered) return;
+            errorResult.summary = rendered.summary;
+            errorResult.message = rendered.message;
+            if (rendered.url) {
+              // The link of the result is the one of the build, but the
+              // explanation knows where the error was reported.
+              errorResult.links = [
+                {
+                  url: rendered.url,
+                  tooltip: "Where the error was reported",
+                  primary: true,
+                  icon: LinkIcon.EXTERNAL,
+                },
+              ];
             }
+            run.statusDescription = rendered.summary;
           }),
         );
       }
@@ -740,7 +757,7 @@ export class ChecksFetcher implements ChecksProvider {
     jenkins: Config,
     changeData: ChangeData,
     statusLink: string,
-  ) {
+  ): Promise<ErrorResponse | null> {
     if (this.isUnavailable(jenkins.name, "error-explanation")) return null;
 
     const errorResult = await (async () => {
@@ -748,7 +765,7 @@ export class ChecksFetcher implements ChecksProvider {
         return await this.fetchFromJenkins(
           jenkins,
           changeData.repo,
-          `${statusLink}error-explanation/api/json`,
+          `${statusLink}error-explanation/api/json?tree=${ERROR_EXPLANATION_TREE}`,
           "GET",
         );
       } catch (e) {
@@ -769,7 +786,7 @@ export class ChecksFetcher implements ChecksProvider {
       return null;
     }
     this.markAvailable(jenkins.name, "error-explanation");
-    return errorInfo.explanation;
+    return errorInfo;
   }
 
   fetchConfig(changeData: ChangeData): Promise<Config[]> {
@@ -1097,3 +1114,131 @@ export function isStageRunId(externalId: string | undefined): boolean {
 export function countBuilds(runs: JenkinsCheckRun[]): number {
   return runs.filter((run) => !isStageRunId(run.externalId)).length;
 }
+
+/** The fields of the error explanation endpoint that are used. */
+const ERROR_EXPLANATION_TREE = [
+  "explanation",
+  "errorSummary",
+  "resolutionSteps",
+  "bestPractices",
+  "providerName",
+  "providerModel",
+  "urlString",
+  "errorSignature",
+  "timestamp",
+].join(",");
+
+/**
+ * The result of the run itself, which an explanation of the failure of the
+ * build is about. It must not be attached to the result of a stage, which is a
+ * check run of its own and has its own explanation.
+ */
+export function findErrorResult(run: JenkinsCheckRun): CheckResult | undefined {
+  const errorResults = (run.results ?? []).filter(
+    (result) => result.category === Category.ERROR,
+  );
+  return (
+    errorResults.find((result) => result.externalId === run.externalId) ??
+    errorResults[0]
+  );
+}
+
+/** The summary and message to report for an explained failure. */
+export interface RenderedExplanation {
+  summary: string;
+  message: string;
+  /** The urlString of the explanation, when it reports one. */
+  url?: string;
+}
+
+/**
+ * Renders what the error explanation plugin reports into the summary and the
+ * message of a check result.
+ *
+ * The plugin used to report only the explanation, whose first line was the
+ * summary and whose remainder was the detail. It now reports a summary of its
+ * own and more, so those are used when they are there.
+ *
+ * @param runStartedTimestamp the explanation is ignored when it was generated
+ *     before the build started, since it cannot be about this build
+ * @return null when there is nothing to report
+ */
+export function renderExplanation(
+  response: ErrorResponse | null,
+  runStartedTimestamp?: string,
+): RenderedExplanation | null {
+  if (response === null) return null;
+  if (wasExplainedBefore(response, runStartedTimestamp)) return null;
+
+  const explanation = (response.explanation ?? "").trim();
+  const errorSummary = (response.errorSummary ?? "").trim();
+  const summary = errorSummary || firstLine(explanation);
+  const detail = errorSummary ? explanation : explanationDetail(explanation);
+
+  const sections = explanationSections(detail, response);
+  if (!summary && sections.length === 0) return null;
+  const message =
+    sections.length === 0
+      ? "No additional details provided."
+      : sections.join("\n\n");
+
+  const rendered: RenderedExplanation = { summary, message };
+  const url = (response.urlString ?? "").trim();
+  if (url) rendered.url = url;
+  return rendered;
+}
+
+/**
+ * A payload generated before the build started is the one of another build,
+ * e.g. of a previous attempt that the provider still reports.
+ */
+function wasExplainedBefore(
+  response: ErrorResponse,
+  runStartedTimestamp?: string,
+): boolean {
+  if (!response.timestamp || !runStartedTimestamp) return false;
+  const explained = new Date(response.timestamp);
+  const started = new Date(runStartedTimestamp);
+  if (isNaN(explained.getTime()) || isNaN(started.getTime())) return false;
+  return explained.getTime() < started.getTime();
+}
+
+function firstLine(text: string): string {
+  return text.split("\n")[0].trim();
+}
+
+/** Everything but the first line, which carries the summary. */
+function explanationDetail(explanation: string): string {
+  return explanation.split("\n").slice(1).join("\n").trim();
+}
+
+function explanationSections(
+  detail: string,
+  response: ErrorResponse,
+): string[] {
+  const sections: string[] = [];
+  if (detail) sections.push(`\`\`\`text\n${detail}\n\`\`\``);
+  sections.push(...renderList("Resolution steps", response.resolutionSteps, true));
+  sections.push(...renderList("Best practices", response.bestPractices, false));
+
+  const provider = (response.providerName ?? "").trim();
+  if (provider) {
+    const model = (response.providerModel ?? "").trim();
+    sections.push(`_Explained by ${provider}${model ? ` (${model})` : ""}_`);
+  }
+  return sections;
+}
+
+function renderList(
+  title: string,
+  items: string[] | undefined,
+  numbered: boolean,
+): string[] {
+  const entries = (items ?? [])
+    .map((item) => (item ?? "").trim())
+    .filter(Boolean);
+  if (entries.length === 0) return [];
+  const lines = entries.map((entry, i) => (numbered ? `${i + 1}. ` : "- ") + entry);
+  return [`### ${title}\n${lines.join("\n")}`];
+}
+

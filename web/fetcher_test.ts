@@ -23,7 +23,9 @@ import {
   JenkinsAction,
   JenkinsCheckRun,
   countBuilds,
+  findErrorResult,
   isStageRunId,
+  renderExplanation,
 } from "./fetcher";
 import {
   Category,
@@ -1112,8 +1114,9 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
 
   let fetcher: ChecksFetcher;
   let warningsRequests: string[];
+  let explanationRequests: string[];
 
-  function stubJenkins(runs: unknown[]): void {
+  function stubJenkins(runs: unknown[], explanation: unknown = null): void {
     (fetcher as any).fetchConfig = () =>
       Promise.resolve([{name: "my-jenkins", url: "http://jenkins", user: ""}]);
     (fetcher as any).toJson = (response: unknown) => Promise.resolve(response);
@@ -1130,7 +1133,11 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
       if (url.includes("/all/api/json")) {
         return Promise.resolve(WARNINGS_ISSUES);
       }
-      // error-explanation, testReport, ...
+      if (url.includes("error-explanation")) {
+        explanationRequests.push(url);
+        return Promise.resolve(explanation);
+      }
+      // testReport, ...
       return Promise.resolve(null);
     };
   }
@@ -1151,6 +1158,7 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
   setup(() => {
     fetcher = makeFetcher();
     warningsRequests = [];
+    explanationRequests = [];
   });
 
   test("the warnings of a build are fetched once, not once per stage", async () => {
@@ -1164,6 +1172,102 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
       "One request for the build, not one per stage run",
     );
     assert.equal(warningsRuns(result.runs).length, 1);
+  });
+
+  function failedRun(externalId: string, checkName: string, nodeId?: string) {
+    return {
+      attempt: 1,
+      change: 4712,
+      checkDescription: "",
+      checkLink: "http://jenkins/job/build/9/",
+      checkName,
+      externalId,
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results: [
+        {
+          category: "ERROR",
+          summary: "",
+          externalId: nodeId ? `${externalId}#${nodeId}` : externalId,
+          links: [
+            {
+              url: "http://jenkins/job/build/9/console",
+              tooltip: "Build log.",
+              primary: true,
+              icon: "CODE",
+            },
+          ],
+        },
+      ],
+      scheduledTimestamp: "2024-06-15T09:59:00Z",
+      startedTimestamp: "2024-06-15T09:59:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "broken since this build",
+      statusLink: "http://jenkins/job/build/9/",
+      actions: [],
+    };
+  }
+
+  const EXPLANATION = {
+    _class: "com.example.ErrorExplanation",
+    explanation: "The compiler could not find the header.",
+    errorSummary: "Compilation failed",
+    resolutionSteps: ["Include the header"],
+    bestPractices: ["Keep includes sorted"],
+    providerName: "Example Provider",
+    providerModel: "model-1",
+    urlString: "http://jenkins/job/build/9/execution/node/12/",
+    errorSignature: "abc123",
+    timestamp: "2024-06-15T10:00:00Z",
+  };
+
+  test("the explanation goes to the run, not to the stage that failed", async () => {
+    const runs = [
+      failedRun("build#9", "build"),
+      failedRun('{"parent":"build#9","run":"build#9#12"}', "Test", "12"),
+    ];
+    stubJenkins(runs, EXPLANATION);
+
+    const result = await fetchRuns(4712);
+
+    const build = result.runs?.find((run) => run.externalId === "build#9");
+    assert.isDefined(build);
+    assert.equal(build!.results?.[0].summary, "Compilation failed");
+    assert.include(build!.results?.[0].message, "could not find the header");
+    assert.include(build!.results?.[0].message, "### Resolution steps");
+    assert.include(build!.results?.[0].message, "### Best practices");
+    assert.include(build!.results?.[0].message, "Example Provider (model-1)");
+    assert.equal(build!.statusDescription, "Compilation failed");
+    assert.include(
+      explanationRequests[0],
+      "error-explanation/api/json?tree=",
+      "Only the fields that are used are requested",
+    );
+    assert.include(explanationRequests[0], "errorSummary");
+
+    // By externalId: computeTreeNames prefixes the checkName with the tree.
+    const stage = result.runs?.find(
+      (run) => run.externalId === '{"parent":"build#9","run":"build#9#12"}',
+    );
+    assert.isDefined(stage);
+    assert.equal(stage!.results?.[0].summary, "", "The stage keeps its own result");
+    assert.isUndefined(stage!.results?.[0].message);
+  });
+
+  test("the link of the explained result points at where the error was reported", async () => {
+    stubJenkins([failedRun("build#9", "build")], EXPLANATION);
+
+    const result = await fetchRuns(4712);
+
+    const build = result.runs?.find((run) => run.externalId === "build#9");
+    assert.equal(build!.results?.[0].links?.length, 1);
+    assert.equal(
+      build!.results?.[0].links?.[0].url,
+      "http://jenkins/job/build/9/execution/node/12/",
+      "The console link of the build is replaced",
+    );
+    assert.isTrue(build!.results?.[0].links?.[0].primary);
   });
 
   test("a further poll does not report the warnings again", async () => {
@@ -1237,3 +1341,140 @@ suite("ChecksFetcher build count", () => {
   });
 });
 
+suite("renderExplanation", () => {
+  const COMPLETE = {
+    _class: "com.example.ErrorExplanation",
+    explanation: "detail line one\ndetail line two",
+    errorSummary: "Compilation failed",
+    resolutionSteps: ["Include the header", "Rebuild"],
+    bestPractices: ["Keep includes sorted"],
+    providerName: "Example Provider",
+    providerModel: "model-1",
+    urlString: "http://jenkins/job/build/9/execution/node/12/",
+    timestamp: "2024-06-15T10:00:00Z",
+  };
+
+  test("uses the summary and the explanation the plugin reports", () => {
+    const rendered = renderExplanation(COMPLETE, "2024-06-15T09:59:00Z");
+
+    assert.equal(rendered?.summary, "Compilation failed");
+    assert.include(rendered?.message, "```text\ndetail line one\ndetail line two\n```");
+    assert.include(rendered?.message, "### Resolution steps\n1. Include the header\n2. Rebuild");
+    assert.include(rendered?.message, "### Best practices\n- Keep includes sorted");
+    assert.include(rendered?.message, "_Explained by Example Provider (model-1)_");
+    assert.equal(rendered?.url, "http://jenkins/job/build/9/execution/node/12/");
+  });
+
+  test("splits the explanation of an older plugin, as it always did", () => {
+    const rendered = renderExplanation({
+      _class: "com.example.ErrorExplanation",
+      explanation: "Compilation failed\ndetail line",
+    });
+
+    assert.equal(rendered?.summary, "Compilation failed");
+    assert.equal(rendered?.message, "```text\ndetail line\n```");
+    assert.isUndefined(rendered?.url);
+  });
+
+  test("an explanation without a detail line keeps the old placeholder", () => {
+    const rendered = renderExplanation({
+      _class: "com.example.ErrorExplanation",
+      explanation: "Compilation failed",
+    });
+
+    assert.equal(rendered?.summary, "Compilation failed");
+    assert.equal(rendered?.message, "No additional details provided.");
+  });
+
+  test("reports a summary without an explanation", () => {
+    const rendered = renderExplanation({
+      _class: "com.example.ErrorExplanation",
+      errorSummary: "Compilation failed",
+      resolutionSteps: ["Include the header"],
+    });
+
+    assert.equal(rendered?.summary, "Compilation failed");
+    assert.include(rendered?.message, "### Resolution steps");
+    assert.notInclude(rendered?.message ?? "", "```text");
+  });
+
+  test("leaves out the attribution without a provider", () => {
+    const rendered = renderExplanation({
+      _class: "com.example.ErrorExplanation",
+      errorSummary: "Compilation failed",
+      explanation: "detail",
+    });
+
+    assert.notInclude(rendered?.message ?? "", "_Explained by");
+  });
+
+  test("ignores an explanation that predates the build", () => {
+    const rendered = renderExplanation(
+      {...COMPLETE, timestamp: "2024-06-15T09:00:00Z"},
+      "2024-06-15T09:59:00Z",
+    );
+
+    assert.isNull(rendered);
+  });
+
+  test("reports nothing when the plugin reports nothing", () => {
+    assert.isNull(renderExplanation(null));
+    assert.isNull(renderExplanation({_class: "com.example.ErrorExplanation"}));
+  });
+});
+
+suite("findErrorResult", () => {
+  function run(externalId: string, results: unknown[]): JenkinsCheckRun {
+    return {
+      attempt: 1,
+      change: 1,
+      checkDescription: "",
+      checkLink: "",
+      checkName: "build",
+      externalId,
+      finishedTimestamp: "2024-06-15T10:00:00Z",
+      labelName: "",
+      patchset: 1,
+      results,
+      scheduledTimestamp: "2024-06-15T10:00:00Z",
+      startedTimestamp: "2024-06-15T10:00:00Z",
+      status: RunStatus.COMPLETED,
+      statusDescription: "",
+      statusLink: "",
+      actions: [],
+    } as JenkinsCheckRun;
+  }
+
+  test("takes the result of the run, not the one of a stage", () => {
+    const error = { category: Category.ERROR, summary: "", externalId: "" };
+    const result = findErrorResult(
+      run("build#9", [
+        {...error, externalId: "build#9#12"},
+        {...error, externalId: "build#9"},
+      ]),
+    );
+
+    assert.equal(result?.externalId, "build#9");
+  });
+
+  test("falls back to any error result of an older plugin", () => {
+    const result = findErrorResult(
+      run("build#9", [
+        {category: Category.ERROR, summary: "", externalId: "build#9"},
+        {category: Category.SUCCESS, summary: "", externalId: ""},
+      ]),
+    );
+
+    assert.equal(result?.externalId, "build#9");
+  });
+
+  test("reports nothing when the run did not fail", () => {
+    const result = findErrorResult(
+      run("build#9", [
+        {category: Category.SUCCESS, summary: "", externalId: "build#9"},
+      ]),
+    );
+
+    assert.isUndefined(result);
+  });
+});
