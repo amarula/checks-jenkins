@@ -414,41 +414,31 @@ export class ChecksFetcher implements ChecksProvider {
         buildCount,
       ];
 
-      // Phase A: Enrich error results with explanations (parallel across runs).
+      // Phase A: Report the explanations of the failed builds as checks of their
+      // own (parallel across runs), so that they show up in the list of checks
+      // and their link can be clicked.
       // Skip entirely if the endpoint was already marked unavailable on a prior poll.
       const completedRuns = data.runs.filter(
         (run: JenkinsCheckRun) =>
           run.status === RunStatus.COMPLETED && !isStageRunId(run.externalId),
       );
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
-        await Promise.all(
+        const explanations = await Promise.all(
           completedRuns.map(async (run: JenkinsCheckRun) => {
-            const errorResult = findErrorResult(run);
-            if (!errorResult) return;
+            // Only a failed build has an explanation.
+            if (!findErrorResult(run)) return null;
             const explanation = await this.explainBuildFailure(
               jenkins,
               changeData,
               run.statusLink,
             );
             const rendered = renderExplanation(explanation, run.startedTimestamp);
-            if (!rendered) return;
-            errorResult.summary = rendered.summary;
-            errorResult.message = rendered.message;
-            if (rendered.url) {
-              // The link of the result is the one of the build, but the
-              // explanation knows where the error was reported.
-              errorResult.links = [
-                {
-                  url: rendered.url,
-                  tooltip: "Where the error was reported",
-                  primary: true,
-                  icon: LinkIcon.EXTERNAL,
-                },
-              ];
-            }
+            if (!rendered) return null;
             run.statusDescription = rendered.summary;
+            return buildErrorExplanation(changeData, run, rendered);
           }),
         );
+        checkRuns.push(...explanations.filter((run) => run !== null));
       }
 
       // Phase B: Fetch warnings + test results (parallel across runs and both types).
@@ -1115,6 +1105,9 @@ export function countBuilds(runs: JenkinsCheckRun[]): number {
   return runs.filter((run) => !isStageRunId(run.externalId)).length;
 }
 
+/** Name of the check run reporting the explanation of a failed build. */
+const ERROR_EXPLANATION_CHECK_NAME = "Error explanation log";
+
 /** The fields of the error explanation endpoint that are used. */
 const ERROR_EXPLANATION_TREE = [
   "explanation",
@@ -1141,6 +1134,44 @@ export function findErrorResult(run: JenkinsCheckRun): CheckResult | undefined {
     errorResults.find((result) => result.externalId === run.externalId) ??
     errorResults[0]
   );
+}
+
+/**
+ * The explanation of a failed build as a check of its own, so that it can be
+ * found and clicked in the list of checks.
+ */
+function buildErrorExplanation(
+  changeData: ChangeData,
+  run: JenkinsCheckRun,
+  rendered: RenderedExplanation,
+): CheckRun {
+  return {
+    change: changeData.changeNumber,
+    patchset: changeData.patchsetNumber,
+    checkName: ERROR_EXPLANATION_CHECK_NAME,
+    status: RunStatus.COMPLETED,
+    statusLink: rendered.url,
+    attempt: run.attempt,
+    actions: [],
+    results: [
+      {
+        show_on_unchanged_lines: false,
+        category: Category.ERROR,
+        summary: rendered.summary,
+        message: rendered.message,
+        links: rendered.url
+          ? [
+              {
+                url: rendered.url,
+                tooltip: "Where the error was reported",
+                primary: true,
+                icon: LinkIcon.CODE,
+              },
+            ]
+          : undefined,
+      },
+    ],
+  };
 }
 
 /** The summary and message to report for an explained failure. */
