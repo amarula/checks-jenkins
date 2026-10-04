@@ -1222,7 +1222,41 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
     timestamp: "2024-06-15T10:00:00Z",
   };
 
-  test("the explanation goes to the run, not to the stage that failed", async () => {
+  test("the explanation is a check of its own, next to the build", async () => {
+    const runs = [
+      failedRun("build#9", "build"),
+      failedRun('{"parent":"build#9","run":"build#9#12"}', "Test", "12"),
+    ];
+    stubJenkins(runs, EXPLANATION);
+
+    const result = await fetchRuns(4712);
+
+    const explanation = result.runs?.find(
+      (run) => run.checkName === "Error explanation",
+    );
+    assert.isDefined(explanation, "Shown in the list of checks, where it is clickable");
+    assert.equal(explanation!.status, RunStatus.COMPLETED);
+    assert.equal(explanation!.attempt, 1);
+    const explained = explanation!.results?.[0];
+    assert.equal(explained?.category, Category.ERROR);
+    assert.equal(explained?.summary, "Compilation failed");
+    assert.include(explained?.message, "could not find the header");
+    assert.include(explained?.message, "### Resolution steps");
+    assert.include(explained?.message, "### Best practices");
+    assert.include(explained?.message, "Example Provider (model-1)");
+    assert.equal(explanation!.statusLink, "http://jenkins/job/build/9/execution/node/12/");
+    assert.equal(explained?.links?.[0].url, explanation!.statusLink);
+    assert.isTrue(explained?.links?.[0].primary);
+
+    assert.include(
+      explanationRequests[0],
+      "error-explanation/api/json?tree=",
+      "Only the fields that are used are requested",
+    );
+    assert.include(explanationRequests[0], "errorSummary");
+  });
+
+  test("the explanation is not attached to the build that failed", async () => {
     const runs = [
       failedRun("build#9", "build"),
       failedRun('{"parent":"build#9","run":"build#9#12"}', "Test", "12"),
@@ -1232,42 +1266,26 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
     const result = await fetchRuns(4712);
 
     const build = result.runs?.find((run) => run.externalId === "build#9");
-    assert.isDefined(build);
-    assert.equal(build!.results?.[0].summary, "Compilation failed");
-    assert.include(build!.results?.[0].message, "could not find the header");
-    assert.include(build!.results?.[0].message, "### Resolution steps");
-    assert.include(build!.results?.[0].message, "### Best practices");
-    assert.include(build!.results?.[0].message, "Example Provider (model-1)");
-    assert.equal(build!.statusDescription, "Compilation failed");
-    assert.include(
-      explanationRequests[0],
-      "error-explanation/api/json?tree=",
-      "Only the fields that are used are requested",
-    );
-    assert.include(explanationRequests[0], "errorSummary");
+    assert.equal(build!.results?.[0].summary, "", "The result of the build is left alone");
+    assert.equal(build!.statusDescription, "Compilation failed", "But the tooltip is set");
 
     // By externalId: computeTreeNames prefixes the checkName with the tree.
     const stage = result.runs?.find(
       (run) => run.externalId === '{"parent":"build#9","run":"build#9#12"}',
     );
-    assert.isDefined(stage);
     assert.equal(stage!.results?.[0].summary, "", "The stage keeps its own result");
-    assert.isUndefined(stage!.results?.[0].message);
   });
 
-  test("the link of the explained result points at where the error was reported", async () => {
-    stubJenkins([failedRun("build#9", "build")], EXPLANATION);
+  test("a build that did not fail gets no explanation", async () => {
+    stubJenkins(RUNS, EXPLANATION);
 
-    const result = await fetchRuns(4712);
+    const result = await fetchRuns(4713);
 
-    const build = result.runs?.find((run) => run.externalId === "build#9");
-    assert.equal(build!.results?.[0].links?.length, 1);
-    assert.equal(
-      build!.results?.[0].links?.[0].url,
-      "http://jenkins/job/build/9/execution/node/12/",
-      "The console link of the build is replaced",
+    const explanation = result.runs?.find(
+      (run) => run.checkName === "Error explanation",
     );
-    assert.isTrue(build!.results?.[0].links?.[0].primary);
+    assert.isUndefined(explanation);
+    assert.equal(explanationRequests.length, 0, "The endpoint is not asked at all");
   });
 
   test("a further poll does not report the warnings again", async () => {
