@@ -1077,9 +1077,10 @@ export function parseExternalId(externalId: string | undefined): {
 }
 
 /**
- * A stage of a pipeline is reported as a check run of its own, nested below the
- * run of the pipeline. Its run key is the key of that run followed by '#' and
- * the ID of the stage's flow node:
+ * A stage of a pipeline that the Jenkins plugin reports as a check run of its
+ * own, nested below the run of the pipeline. The plugin does so when it is
+ * configured to, and older versions of it always did. Its run key is the key of
+ * that run followed by '#' and the ID of the stage's flow node:
  *
  *   '{"parent":"my-pipeline#7","run":"my-pipeline#7#12"}'
  *
@@ -1089,10 +1090,30 @@ export function parseExternalId(externalId: string | undefined): {
  * A stage is not a build of its own: it shares the statusLink of the pipeline it
  * belongs to, so build level data, e.g. coverage or warnings, must not be
  * fetched once per stage.
+ *
+ * By default the plugin reports a stage as a result of the run of its pipeline
+ * instead, see isStageResultId().
  */
 export function isStageRunId(externalId: string | undefined): boolean {
   const { runKey, parentKey } = parseExternalId(externalId);
   return !!parentKey && runKey.startsWith(`${parentKey}#`);
+}
+
+/**
+ * A stage of a pipeline that the Jenkins plugin reports as a result of the run
+ * of its pipeline: its result ID is the key of that run followed by '#' and the
+ * ID of the stage's flow node, e.g. 'my-pipeline#7#12'. The key of a run is its
+ * external ID, or the run part of that ID when it is a downstream build, whose
+ * external ID is nested in its upstream run. The result of the run itself
+ * carries the whole external ID of the run.
+ */
+export function isStageResultId(
+  resultExternalId: string | undefined,
+  runExternalId: string | undefined,
+): boolean {
+  if (!resultExternalId || !runExternalId) return false;
+  const { runKey } = parseExternalId(runExternalId);
+  return !!runKey && resultExternalId.startsWith(`${runKey}#`);
 }
 
 /**
@@ -1123,8 +1144,11 @@ const ERROR_EXPLANATION_TREE = [
 
 /**
  * The result of the run itself, which an explanation of the failure of the
- * build is about. It must not be attached to the result of a stage, which is a
- * check run of its own and has its own explanation.
+ * build is about. It must not be attached to the result of a stage, which
+ * reports the failure of that stage and has its own explanation. Stages are
+ * results of their run, and a build with no result of its own — a Pipeline
+ * build that is still running, or one whose result is not among the results —
+ * therefore has to fall back to a result that is not a stage's.
  */
 export function findErrorResult(run: JenkinsCheckRun): CheckResult | undefined {
   const errorResults = (run.results ?? []).filter(
@@ -1132,7 +1156,9 @@ export function findErrorResult(run: JenkinsCheckRun): CheckResult | undefined {
   );
   return (
     errorResults.find((result) => result.externalId === run.externalId) ??
-    errorResults[0]
+    errorResults.find(
+      (result) => !isStageResultId(result.externalId, run.externalId),
+    )
   );
 }
 

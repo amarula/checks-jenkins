@@ -24,6 +24,7 @@ import {
   JenkinsCheckRun,
   countBuilds,
   findErrorResult,
+  isStageResultId,
   isStageRunId,
   renderExplanation,
 } from "./fetcher";
@@ -1037,6 +1038,42 @@ suite("ChecksFetcher stage runs", () => {
   });
 });
 
+suite("ChecksFetcher stage results", () => {
+  test("a result of a stage of a direct run is a stage result", () => {
+    assert.isTrue(isStageResultId("my-pipeline#7#12", "my-pipeline#7"));
+  });
+
+  test("a result of a stage of a downstream run is a stage result", () => {
+    // The stage is keyed by the run, the run itself is nested in its upstream.
+    assert.isTrue(
+      isStageResultId(
+        "downstream-job#3#12",
+        '{"parent":"trigger-job#5","run":"downstream-job#3"}',
+      ),
+    );
+  });
+
+  test("the result of the run itself is not a stage result", () => {
+    assert.isFalse(isStageResultId("my-pipeline#7", "my-pipeline#7"));
+    assert.isFalse(
+      isStageResultId(
+        '{"parent":"trigger-job#5","run":"downstream-job#3"}',
+        '{"parent":"trigger-job#5","run":"downstream-job#3"}',
+      ),
+    );
+  });
+
+  test("a result of another run is not a stage result", () => {
+    assert.isFalse(isStageResultId("my-pipeline#7#12", "my-pipeline#8"));
+  });
+
+  test("a result or a run without an id is not a stage result", () => {
+    assert.isFalse(isStageResultId(undefined, "my-pipeline#7"));
+    assert.isFalse(isStageResultId("my-pipeline#7#12", undefined));
+    assert.isFalse(isStageResultId("my-pipeline#7#12", ""));
+  });
+});
+
 suite("ChecksFetcher.fetch of a pipeline with stages", () => {
   /**
    * The runs a Jenkins plugin reports for a pipeline: the run itself and one
@@ -1484,6 +1521,35 @@ suite("findErrorResult", () => {
     );
 
     assert.equal(result?.externalId, "build#9");
+  });
+
+  test("does not fall back to the result of a stage", () => {
+    // A build that is still running has the results of its stages only.
+    const result = findErrorResult(
+      run("build#9", [
+        {category: Category.ERROR, summary: "Test", externalId: "build#9#12"},
+      ]),
+    );
+
+    assert.isUndefined(
+      result,
+      "The explanation is about the build, not about a stage",
+    );
+  });
+
+  test("does not fall back to the result of a stage of a downstream run", () => {
+    const downstream = '{"parent":"trigger-job#5","run":"downstream-job#3"}';
+    const result = findErrorResult(
+      run(downstream, [
+        {
+          category: Category.ERROR,
+          summary: "Test",
+          externalId: "downstream-job#3#12",
+        },
+      ]),
+    );
+
+    assert.isUndefined(result);
   });
 
   test("reports nothing when the run did not fail", () => {

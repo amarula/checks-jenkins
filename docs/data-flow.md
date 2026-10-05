@@ -114,8 +114,8 @@ Browser (ChecksFetcher)           IndexedDB               Gerrit Proxy        Je
     parent or child relationship)
   Group by tree, then by depth
   Rewrite checkName in-place:
-    "01 🌳 Build"
-    "02 🍃 Test"
+    "01 🌳 build-pipeline"
+    "02 🍃 integration-tests"
   (skipped if no dependencies)
 
   ── Phase A: Error explanation (parallel per run) ──

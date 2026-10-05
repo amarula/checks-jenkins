@@ -80,6 +80,8 @@ The raw runs are cached before `computeTreeNames()` mutations to avoid storing a
 
 `computeTreeNames()` (`web/fetcher.ts:546`) rewrites `checkName` in-place to visualize upstream/downstream pipeline structure directly in Gerrit's flat Checks UI table.
 
+The stages of a pipeline are not part of that tree: by default the Jenkins-side plugin reports them as results of the run of their pipeline (`isStageResultId()` in `web/fetcher.ts`), so they appear inside the run and not as rows of their own. Where the plugin is configured to report a stage as a run of its own, nested below its pipeline, the naming handles it as well (`isStageRunId()`), as it does for the older plugin versions that always did.
+
 #### externalId format
 
 The Jenkins-side `gerrit-checks-api-plugin` encodes relationships in `externalId`:
@@ -88,6 +90,8 @@ The Jenkins-side `gerrit-checks-api-plugin` encodes relationships in `externalId
 |---|---|
 | Direct run (no parent) | `"jobFullName#buildNumber"` |
 | Downstream run | `{"parent":"upstreamJob#N","run":"thisJob#M"}` (JSON string) |
+| Stage reported as a check run | `{"parent":"job#N","run":"job#N#<nodeId>"}` (JSON string) |
+| Stage reported as a result | `"job#N#<nodeId>"` on a result of the run |
 
 #### Naming convention
 
@@ -119,15 +123,13 @@ Run labels visible to the user in each component of the pipeline tree are:
 
 #### Example output
 
-*Single tree:*
+*Single tree of upstream and downstream jobs:*
 
 ```
-01 🌳 Base Initialization
-02 🌳 Parallel Builds
-03 🍃 Backend Unit Tests
-03 🍃 Frontend Unit Tests
-03 🍃 Database Migrations
-04 🍃 Final Release
+01 🌳 build-pipeline       ← triggered by Gerrit
+02 🌳 integration-tests    ← triggered by build-pipeline
+03 🍃 publish-artifacts    ← triggered by integration-tests
+03 🍃 nightly-reports
 ```
 
 *Two independent trees in the same batch:*

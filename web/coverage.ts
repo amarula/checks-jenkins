@@ -500,8 +500,9 @@ export class CoverageClient {
       return [];
 
     return (data.runs as JenkinsRunEntry[])
-      // A stage of a pipeline shares the statusLink of the pipeline it belongs
-      // to, so it would report the same coverage over and over again.
+      // A stage that is reported as a check run of its own shares the statusLink
+      // of the pipeline it belongs to, so it would report the same coverage over
+      // and over again.
       .filter(
         (r) =>
           r.status === "COMPLETED" && r.statusLink && !isStageRunId(r.externalId),
