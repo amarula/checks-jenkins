@@ -1313,6 +1313,51 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
     assert.equal(stage!.results?.[0].summary, "", "The stage keeps its own result");
   });
 
+  test("the explanation of a build that was rerun is not kept", async () => {
+    // Gerrit shows the run of a check whose attempt is the highest, so the
+    // explanation of the build that the rerun replaced would be the one reported
+    // as current, pointing at the build that is no longer the one to look at.
+    const runs = [
+      failedRun("build#9", "build"),
+      {
+        ...failedRun("build#10", "build"),
+        attempt: 2,
+        checkLink: "http://jenkins/job/build/10/",
+        status: RunStatus.RUNNING,
+        statusLink: "http://jenkins/job/build/10/",
+      },
+    ];
+    stubJenkins(runs, EXPLANATION);
+
+    const result = await fetchRuns(4714);
+
+    assert.isUndefined(
+      result.runs?.find((run) => run.checkName === "Error explanation log"),
+      "The build the explanation is about was replaced by the rerun",
+    );
+  });
+
+  test("the explanation of the rerun replaces the one of the build before it", async () => {
+    const runs = [
+      failedRun("build#9", "build"),
+      {
+        ...failedRun("build#10", "build"),
+        attempt: 2,
+        checkLink: "http://jenkins/job/build/10/",
+        statusLink: "http://jenkins/job/build/10/",
+      },
+    ];
+    stubJenkins(runs, EXPLANATION);
+
+    const result = await fetchRuns(4715);
+
+    const explanations = (result.runs ?? []).filter(
+      (run) => run.checkName === "Error explanation log",
+    );
+    assert.equal(explanations.length, 1, "One explanation, not one per attempt");
+    assert.equal(explanations[0].attempt, 2);
+  });
+
   test("a build that did not fail gets no explanation", async () => {
     stubJenkins(RUNS, EXPLANATION);
 

@@ -414,17 +414,25 @@ export class ChecksFetcher implements ChecksProvider {
         buildCount,
       ];
 
-      // Phase A: Report the explanations of the failed builds as checks of their
-      // own (parallel across runs), so that they show up in the list of checks
-      // and their link can be clicked.
-      // Skip entirely if the endpoint was already marked unavailable on a prior poll.
       const completedRuns = data.runs.filter(
         (run: JenkinsCheckRun) =>
           run.status === RunStatus.COMPLETED && !isStageRunId(run.externalId),
       );
+
+      // Phase A: Report the explanations of the failed builds as checks of their
+      // own (parallel across runs), so that they show up in the list of checks
+      // and their link can be clicked.
+      // Only the newest run of a check is explained: Gerrit shows the run of a
+      // check whose attempt is the highest as the current one, so the explanation
+      // of the build that a rerun replaced would be the one reported as current,
+      // about a build that is no longer the one to look at.
+      // Skip entirely if the endpoint was already marked unavailable on a prior poll.
+      const explainedRuns = newestRunOfEachCheck(
+        data.runs.filter((run: JenkinsCheckRun) => !isStageRunId(run.externalId)),
+      ).filter((run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED);
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
         const explanations = await Promise.all(
-          completedRuns.map(async (run: JenkinsCheckRun) => {
+          explainedRuns.map(async (run: JenkinsCheckRun) => {
             // Only a failed build has an explanation.
             if (!findErrorResult(run)) return null;
             const explanation = await this.explainBuildFailure(
@@ -1160,6 +1168,35 @@ export function findErrorResult(run: JenkinsCheckRun): CheckResult | undefined {
       (result) => !isStageResultId(result.externalId, run.externalId),
     )
   );
+}
+
+/**
+ * The newest run of each check, by attempt and then by the time it was
+ * scheduled. A check is a job, reported once per build: Gerrit shows the run
+ * whose attempt is the highest as the current one, so what is reported about
+ * the check as a whole — the explanation of a failure, for instance — may only
+ * be taken from its newest run. The one of a build that a rerun replaced would
+ * otherwise be shown as the current one, pointing at a build that is no longer
+ * the one to look at.
+ */
+export function newestRunOfEachCheck(runs: JenkinsCheckRun[]): JenkinsCheckRun[] {
+  const newest = new Map<string, JenkinsCheckRun>();
+  for (const run of runs) {
+    const known = newest.get(run.checkName);
+    if (known === undefined || isNewer(run, known)) {
+      newest.set(run.checkName, run);
+    }
+  }
+  return [...newest.values()];
+}
+
+function isNewer(run: JenkinsCheckRun, other: JenkinsCheckRun): boolean {
+  const attempt = run.attempt ?? 0;
+  const otherAttempt = other.attempt ?? 0;
+  if (attempt !== otherAttempt) return attempt > otherAttempt;
+  // Every build of a downstream job is reported with the same attempt, so those
+  // are told apart by when they ran instead.
+  return (run.scheduledTimestamp ?? "") > (other.scheduledTimestamp ?? "");
 }
 
 /**

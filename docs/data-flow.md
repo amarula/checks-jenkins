@@ -119,7 +119,9 @@ Browser (ChecksFetcher)           IndexedDB               Gerrit Proxy        Je
   (skipped if no dependencies)
 
   ── Phase A: Error explanation (parallel per run) ──
-  For each COMPLETED run:
+  For the newest run of each check
+  that is COMPLETED (a rerun replaced
+  the build of the older one):
     POST proxy-trigger
     {urlpath: statusLink +
      "error-explanation/api/json"}

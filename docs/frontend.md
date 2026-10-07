@@ -49,7 +49,9 @@ fetch(changeData)
   │                                     rewrite checkName as "NN 🌳|🍃 originalName"
   │                                     (skipped when no dependencies exist)
   │
-  ├─ 4. Phase A (parallel)         → Error explanation enrichment for COMPLETED runs
+  ├─ 4. Phase A (parallel)         → Error explanation enrichment for the newest run of
+  │     │                             each check that is COMPLETED (a rerun replaces the
+  │     │                             explanation of the build it replaced)
   │     └─ explainBuildFailure()      GET {statusLink}error-explanation/api/json
   │
   ├─ 5. Phase B (parallel)         → Warnings + test enrichment (cached in IndexedDB)
