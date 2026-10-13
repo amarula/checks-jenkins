@@ -1076,6 +1076,74 @@ suite("ChecksFetcher tree naming", () => {
     assert.equal(runs[4].checkName, `01 ${TREE} Tree2-Root`);
     assert.equal(runs[5].checkName, `02 ${LEAF} Tree2-Leaf`);
   });
+
+  test("every build of a check is named alike, the stages of the newest below it", () => {
+    // The stages of a job are reported by its newest build only, so only that
+    // build has children.  Naming it apart from the builds before it would give
+    // the job a second check, each with a latest attempt of its own, and the
+    // state of the build the newest one replaced would be shown as the current.
+    const runs = [
+      makeRun({ checkName: "Verify", externalId: "verify#1", attempt: 1 }),
+      makeRun({ checkName: "Verify", externalId: "verify#2", attempt: 2 }),
+      makeRun({
+        checkName: "Build",
+        externalId: '{"parent":"verify#2","run":"verify#2#12"}',
+        attempt: 2,
+      }),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    // The builds of the check first, then the stages of the newest of them.
+    assert.deepEqual(
+      runs.map((run) => run.checkName),
+      [`01 ${TREE} Verify`, `01 ${TREE} Verify`, `02 ${LEAF} Build`],
+    );
+  });
+
+  test("a check is a tree when any of its builds has children", () => {
+    // An older build reporting stages is enough: the builds of a check share
+    // their name, so they all have to carry the label of the check.
+    const runs = [
+      makeRun({ checkName: "Verify", externalId: "verify#1", attempt: 1 }),
+      makeRun({
+        checkName: "Build",
+        externalId: '{"parent":"verify#1","run":"verify#1#12"}',
+        attempt: 1,
+      }),
+      makeRun({ checkName: "Verify", externalId: "verify#2", attempt: 2 }),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.deepEqual(
+      runs.map((run) => run.checkName),
+      [`01 ${TREE} Verify`, `01 ${TREE} Verify`, `02 ${LEAF} Build`],
+    );
+  });
+
+  test("a stage of another build carries the name of its check", () => {
+    const runs = [
+      makeRun({ checkName: "Verify", externalId: "verify#1", attempt: 1 }),
+      makeRun({
+        checkName: "Build",
+        externalId: '{"parent":"verify#1","run":"verify#1#12"}',
+        attempt: 1,
+      }),
+      makeRun({ checkName: "Verify", externalId: "verify#2", attempt: 2 }),
+      makeRun({
+        checkName: "Build",
+        externalId: '{"parent":"verify#2","run":"verify#2#13"}',
+        attempt: 2,
+      }),
+    ];
+    (fetcher as any).computeTreeNames(runs);
+    assert.deepEqual(
+      runs.map((run) => run.checkName),
+      [
+        `01 ${TREE} Verify`,
+        `01 ${TREE} Verify`,
+        `02 ${LEAF} Build`,
+        `02 ${LEAF} Build`,
+      ],
+    );
+  });
 });
 
 suite("ChecksFetcher stage runs", () => {
