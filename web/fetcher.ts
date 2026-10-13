@@ -426,8 +426,10 @@ export class ChecksFetcher implements ChecksProvider {
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
         const explanations = await Promise.all(
           newestCompletedRuns.map(async (run: JenkinsCheckRun) => {
-            // Only a failed build has an explanation.
-            if (!findErrorResult(run)) return null;
+            // Only a build that did not succeed has an explanation: one that
+            // failed, was unstable or was aborted, the last of which Gerrit reads
+            // as informational rather than as an error.
+            if (ownResultOf(run)?.category === Category.SUCCESS) return null;
             const explanation = await this.explainBuildFailure(
               jenkins,
               changeData,
@@ -751,7 +753,12 @@ export class ChecksFetcher implements ChecksProvider {
     changeData: ChangeData,
     statusLink: string,
   ): Promise<ErrorResponse | null> {
-    if (this.isUnavailable(jenkins.name, "error-explanation")) return null;
+    // Counted per build: the endpoint not having an explanation for one build,
+    // e.g. because the provider failed for it, says nothing about the others, and
+    // a build that is asked again on every poll would otherwise take the whole
+    // endpoint down for the time it is retried within.
+    const endpoint = `error-explanation ${statusLink}`;
+    if (this.isUnavailable(jenkins.name, endpoint)) return null;
 
     const errorResult = await (async () => {
       try {
@@ -770,7 +777,7 @@ export class ChecksFetcher implements ChecksProvider {
       errorResult === null ||
       (errorResult.ok !== undefined && !errorResult.ok)
     ) {
-      this.markUnavailable(jenkins.name, "error-explanation");
+      this.markUnavailable(jenkins.name, endpoint);
       return null;
     }
 
@@ -778,7 +785,7 @@ export class ChecksFetcher implements ChecksProvider {
     if (errorInfo === null) {
       return null;
     }
-    this.markAvailable(jenkins.name, "error-explanation");
+    this.markAvailable(jenkins.name, endpoint);
     return errorInfo;
   }
 
@@ -1121,28 +1128,12 @@ export function parseExternalId(externalId: string | undefined): {
  * fetched once per stage.
  *
  * By default the plugin reports a stage as a result of the run of its pipeline
- * instead, see isStageResultId().
+ * instead, whose result ID is the key of that run followed by '#' and the ID of
+ * the stage's flow node.
  */
 export function isStageRunId(externalId: string | undefined): boolean {
   const { runKey, parentKey } = parseExternalId(externalId);
   return !!parentKey && runKey.startsWith(`${parentKey}#`);
-}
-
-/**
- * A stage of a pipeline that the Jenkins plugin reports as a result of the run
- * of its pipeline: its result ID is the key of that run followed by '#' and the
- * ID of the stage's flow node, e.g. 'my-pipeline#7#12'. The key of a run is its
- * external ID, or the run part of that ID when it is a downstream build, whose
- * external ID is nested in its upstream run. The result of the run itself
- * carries the whole external ID of the run.
- */
-export function isStageResultId(
-  resultExternalId: string | undefined,
-  runExternalId: string | undefined,
-): boolean {
-  if (!resultExternalId || !runExternalId) return false;
-  const { runKey } = parseExternalId(runExternalId);
-  return !!runKey && resultExternalId.startsWith(`${runKey}#`);
 }
 
 /**
@@ -1172,22 +1163,13 @@ const ERROR_EXPLANATION_TREE = [
 ].join(",");
 
 /**
- * The result of the run itself, which an explanation of the failure of the
- * build is about. It must not be attached to the result of a stage, which
- * reports the failure of that stage and has its own explanation. Stages are
- * results of their run, and a build with no result of its own — a Pipeline
- * build that is still running, or one whose result is not among the results —
- * therefore has to fall back to a result that is not a stage's.
+ * The result of the run itself, which is what the run as a whole reported, as
+ * opposed to the results of its stages: Gerrit identifies it by the external ID
+ * of the run. A run that is still building has none.
  */
-export function findErrorResult(run: JenkinsCheckRun): CheckResult | undefined {
-  const errorResults = (run.results ?? []).filter(
-    (result) => result.category === Category.ERROR,
-  );
-  return (
-    errorResults.find((result) => result.externalId === run.externalId) ??
-    errorResults.find(
-      (result) => !isStageResultId(result.externalId, run.externalId),
-    )
+export function ownResultOf(run: JenkinsCheckRun): CheckResult | undefined {
+  return (run.results ?? []).find(
+    (result) => result.externalId === run.externalId,
   );
 }
 

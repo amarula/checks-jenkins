@@ -23,8 +23,7 @@ import {
   JenkinsAction,
   JenkinsCheckRun,
   countBuilds,
-  findErrorResult,
-  isStageResultId,
+  ownResultOf,
   isStageRunId,
   renderExplanation,
 } from "./fetcher";
@@ -1136,42 +1135,6 @@ suite("ChecksFetcher stage runs", () => {
   });
 });
 
-suite("ChecksFetcher stage results", () => {
-  test("a result of a stage of a direct run is a stage result", () => {
-    assert.isTrue(isStageResultId("my-pipeline#7#12", "my-pipeline#7"));
-  });
-
-  test("a result of a stage of a downstream run is a stage result", () => {
-    // The stage is keyed by the run, the run itself is nested in its upstream.
-    assert.isTrue(
-      isStageResultId(
-        "downstream-job#3#12",
-        '{"parent":"trigger-job#5","run":"downstream-job#3"}',
-      ),
-    );
-  });
-
-  test("the result of the run itself is not a stage result", () => {
-    assert.isFalse(isStageResultId("my-pipeline#7", "my-pipeline#7"));
-    assert.isFalse(
-      isStageResultId(
-        '{"parent":"trigger-job#5","run":"downstream-job#3"}',
-        '{"parent":"trigger-job#5","run":"downstream-job#3"}',
-      ),
-    );
-  });
-
-  test("a result of another run is not a stage result", () => {
-    assert.isFalse(isStageResultId("my-pipeline#7#12", "my-pipeline#8"));
-  });
-
-  test("a result or a run without an id is not a stage result", () => {
-    assert.isFalse(isStageResultId(undefined, "my-pipeline#7"));
-    assert.isFalse(isStageResultId("my-pipeline#7#12", undefined));
-    assert.isFalse(isStageResultId("my-pipeline#7#12", ""));
-  });
-});
-
 suite("ChecksFetcher.fetch of a pipeline with stages", () => {
   /**
    * The runs a Jenkins plugin reports for a pipeline: the run itself and one
@@ -1493,6 +1456,79 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
     assert.equal(explanationRequests.length, 0, "The endpoint is not asked at all");
   });
 
+  test("a build that was aborted is explained", async () => {
+    // A pipeline whose stage failed and was stopped with it is reported as
+    // aborted, which Gerrit reads as informational rather than as an error; the
+    // provider explains those builds as well.
+    const aborted = {
+      ...failedRun("build#9", "build"),
+      results: [
+        { category: Category.INFO, summary: "", externalId: "build#9", links: [] },
+      ],
+      statusDescription: "aborted",
+    };
+    stubJenkins([aborted], EXPLANATION);
+
+    const result = await fetchRuns(4719);
+
+    const explanation = result.runs?.find(
+      (run) => run.checkName === "Error explanation log",
+    );
+    assert.isDefined(explanation, "The explanation of the aborted build");
+    assert.equal(explanation!.results?.[0].summary, "Compilation failed");
+  });
+
+  test("a build whose explanation cannot be fetched does not stop the others", async () => {
+    // The endpoint can have nothing for one build, e.g. because the provider
+    // failed for it. Asking it again is cheap, and it must not be taken for the
+    // endpoint being gone, which would leave every other build unexplained.
+    const broken = failedRun("build#9", "broken-job");
+    const working = {
+      ...failedRun("build#10", "working-job"),
+      checkLink: "http://jenkins/job/build/10/",
+      statusLink: "http://jenkins/job/build/10/",
+    };
+    let runs = [broken];
+    (fetcher as any).fetchConfig = () =>
+      Promise.resolve([{name: "my-jenkins", url: "http://jenkins", user: ""}]);
+    (fetcher as any).toJson = (response: unknown) => Promise.resolve(response);
+    const asked: string[] = [];
+    (fetcher as any).fetchFromJenkins = (
+      _jenkins: unknown,
+      _repo: string,
+      url: string,
+    ) => {
+      if (url.includes("gerrit-checks/runs")) {
+        return Promise.resolve({runs});
+      }
+      if (url.includes("error-explanation")) {
+        asked.push(url);
+        return url.includes("build/9/")
+          ? Promise.reject(new Error("404 Not Found"))
+          : Promise.resolve(EXPLANATION);
+      }
+      return Promise.resolve(null);
+    };
+
+    // Two polls of the build that cannot be explained, which fill the budget of
+    // failures the endpoint is retried within.
+    await fetchRuns(4720);
+    await fetchRuns(4720);
+
+    runs = [working];
+    asked.length = 0;
+    const result = await fetchRuns(4721);
+
+    assert.isTrue(
+      asked.some((url) => url.includes("build/10/")),
+      "A build of another change is still asked about",
+    );
+    assert.isDefined(
+      result.runs?.find((run) => run.checkName === "Error explanation log"),
+      "And its explanation is reported",
+    );
+  });
+
   test("a further poll does not report the warnings again", async () => {
     stubJenkins(RUNS);
 
@@ -1646,87 +1682,30 @@ suite("renderExplanation", () => {
   });
 });
 
-suite("findErrorResult", () => {
+
+suite("ownResultOf", () => {
   function run(externalId: string, results: unknown[]): JenkinsCheckRun {
-    return {
-      attempt: 1,
-      change: 1,
-      checkDescription: "",
-      checkLink: "",
-      checkName: "build",
-      externalId,
-      finishedTimestamp: "2024-06-15T10:00:00Z",
-      labelName: "",
-      patchset: 1,
-      results,
-      scheduledTimestamp: "2024-06-15T10:00:00Z",
-      startedTimestamp: "2024-06-15T10:00:00Z",
-      status: RunStatus.COMPLETED,
-      statusDescription: "",
-      statusLink: "",
-      actions: [],
-    } as JenkinsCheckRun;
+    return { externalId, results } as JenkinsCheckRun;
   }
 
-  test("takes the result of the run, not the one of a stage", () => {
-    const error = { category: Category.ERROR, summary: "", externalId: "" };
-    const result = findErrorResult(
+  test("takes the result the run is identified by", () => {
+    const own = { category: Category.INFO, summary: "", externalId: "build#9" };
+
+    const result = ownResultOf(
       run("build#9", [
-        {...error, externalId: "build#9#12"},
-        {...error, externalId: "build#9"},
+        { category: Category.ERROR, summary: "Test", externalId: "build#9#12" },
+        own,
       ]),
     );
 
-    assert.equal(result?.externalId, "build#9");
-  });
-
-  test("falls back to any error result of an older plugin", () => {
-    const result = findErrorResult(
-      run("build#9", [
-        {category: Category.ERROR, summary: "", externalId: "build#9"},
-        {category: Category.SUCCESS, summary: "", externalId: ""},
-      ]),
-    );
-
-    assert.equal(result?.externalId, "build#9");
-  });
-
-  test("does not fall back to the result of a stage", () => {
-    // A build that is still running has the results of its stages only.
-    const result = findErrorResult(
-      run("build#9", [
-        {category: Category.ERROR, summary: "Test", externalId: "build#9#12"},
-      ]),
-    );
-
-    assert.isUndefined(
+    assert.equal(
       result,
-      "The explanation is about the build, not about a stage",
+      own,
+      "A stage reports its own failure, not the one of its build",
     );
   });
 
-  test("does not fall back to the result of a stage of a downstream run", () => {
-    const downstream = '{"parent":"trigger-job#5","run":"downstream-job#3"}';
-    const result = findErrorResult(
-      run(downstream, [
-        {
-          category: Category.ERROR,
-          summary: "Test",
-          externalId: "downstream-job#3#12",
-        },
-      ]),
-    );
-
-    assert.isUndefined(result);
-  });
-
-  test("reports nothing when the run did not fail", () => {
-    const result = findErrorResult(
-      run("build#9", [
-        {category: Category.SUCCESS, summary: "", externalId: "build#9"},
-      ]),
-    );
-
-    assert.isUndefined(result);
+  test("a run that reported nothing of its own has no result", () => {
+    assert.isUndefined(ownResultOf(run("build#9", [])));
   });
 });

@@ -50,8 +50,10 @@ fetch(changeData)
   │                                     (skipped when no dependencies exist)
   │
   ├─ 4. Phase A (parallel)         → Error explanation enrichment for the newest run of
-  │     │                             each check that is COMPLETED (a rerun replaces the
-  │     │                             explanation of the build it replaced)
+  │     │                             each check that is COMPLETED and did not succeed
+  │     │                             (a rerun replaces the explanation of the build it
+  │     │                             replaced); a failure is counted per build, so one
+  │     │                             build without an explanation leaves the others
   │     └─ explainBuildFailure()      GET {statusLink}error-explanation/api/json
   │
   ├─ 5. Phase B (parallel)         → Warnings + test enrichment (cached in IndexedDB)
@@ -82,7 +84,7 @@ The raw runs are cached before `computeTreeNames()` mutations to avoid storing a
 
 `computeTreeNames()` (`web/fetcher.ts:546`) rewrites `checkName` in-place to visualize upstream/downstream pipeline structure directly in Gerrit's flat Checks UI table.
 
-The stages of a pipeline are not part of that tree: by default the Jenkins-side plugin reports them as results of the run of their pipeline (`isStageResultId()` in `web/fetcher.ts`), so they appear inside the run and not as rows of their own. Where the plugin is configured to report a stage as a run of its own, nested below its pipeline, the naming handles it as well (`isStageRunId()`), as it does for the older plugin versions that always did.
+The stages of a pipeline are not part of that tree: by default the Jenkins-side plugin reports them as results of the run of their pipeline — their external ID is the key of that run followed by '#' and the ID of the stage's flow node — so they appear inside the run and not as rows of their own. Where the plugin is configured to report a stage as a run of its own, nested below its pipeline, the naming handles it as well (`isStageRunId()`), as it does for the older plugin versions that always did.
 
 #### externalId format
 
