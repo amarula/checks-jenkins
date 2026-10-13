@@ -1456,6 +1456,31 @@ suite("ChecksFetcher.fetch of a pipeline with stages", () => {
     assert.equal(explanations[0].attempt, 2);
   });
 
+  test("the warnings of the build a rerun replaced are not reported", async () => {
+    // Gerrit shows the run of a check whose attempt is the highest, so the
+    // warnings of the build that the rerun replaced would be the ones reported
+    // as the current state of the check they belong to.
+    const runs = [
+      failedRun("build#9", "build"),
+      {
+        ...failedRun("build#10", "build"),
+        attempt: 2,
+        checkLink: "http://jenkins/job/build/10/",
+        statusLink: "http://jenkins/job/build/10/",
+      },
+    ];
+    stubJenkins(runs);
+
+    const result = await fetchRuns(4716);
+
+    const warnings = (result.runs ?? []).filter(
+      (run) => run.checkName === "Lint warnings",
+    );
+    assert.equal(warnings.length, 1, "One set of warnings, not one per attempt");
+    assert.equal(warnings[0].attempt, 2, "The one of the newest build");
+    assert.equal(warningsRequests.length, 1, "Only the newest build is asked");
+  });
+
   test("a build that did not fail gets no explanation", async () => {
     stubJenkins(RUNS, EXPLANATION);
 

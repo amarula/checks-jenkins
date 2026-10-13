@@ -410,25 +410,22 @@ export class ChecksFetcher implements ChecksProvider {
         buildCount,
       ];
 
-      const completedRuns = data.runs.filter(
-        (run: JenkinsCheckRun) =>
-          run.status === RunStatus.COMPLETED && !isStageRunId(run.externalId),
-      );
+      // What is reported about a check as a whole is taken from its newest run:
+      // Gerrit shows the run of a check whose attempt is the highest as the
+      // current one, so what an older build of it reported — the explanation of
+      // the failure a rerun replaced, or the warnings and the test results of the
+      // build it replaced — would be reported as the current one instead.
+      const newestCompletedRuns = newestRunOfEachCheck(
+        data.runs.filter((run: JenkinsCheckRun) => !isStageRunId(run.externalId)),
+      ).filter((run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED);
 
       // Phase A: Report the explanations of the failed builds as checks of their
       // own (parallel across runs), so that they show up in the list of checks
       // and their link can be clicked.
-      // Only the newest run of a check is explained: Gerrit shows the run of a
-      // check whose attempt is the highest as the current one, so the explanation
-      // of the build that a rerun replaced would be the one reported as current,
-      // about a build that is no longer the one to look at.
       // Skip entirely if the endpoint was already marked unavailable on a prior poll.
-      const explainedRuns = newestRunOfEachCheck(
-        data.runs.filter((run: JenkinsCheckRun) => !isStageRunId(run.externalId)),
-      ).filter((run: JenkinsCheckRun) => run.status === RunStatus.COMPLETED);
       if (!this.isUnavailable(jenkins.name, "error-explanation")) {
         const explanations = await Promise.all(
-          explainedRuns.map(async (run: JenkinsCheckRun) => {
+          newestCompletedRuns.map(async (run: JenkinsCheckRun) => {
             // Only a failed build has an explanation.
             if (!findErrorResult(run)) return null;
             const explanation = await this.explainBuildFailure(
@@ -453,7 +450,7 @@ export class ChecksFetcher implements ChecksProvider {
         cachedData === undefined ||
         cachedData.length === 0
       ) {
-        const enrichmentPromises = completedRuns.flatMap(
+        const enrichmentPromises = newestCompletedRuns.flatMap(
           (run: JenkinsCheckRun) => {
             const promises: Promise<CheckRun[] | null>[] = [];
             if (!this.isUnavailable(jenkins.name, "warnings")) {
@@ -480,7 +477,9 @@ export class ChecksFetcher implements ChecksProvider {
           },
         );
         const results = await Promise.all(enrichmentPromises);
-        const warningsData = results.flat().filter(Boolean);
+        const warningsData = results
+          .flat()
+          .filter((run): run is CheckRun => run !== null);
         if (warningsData.length > 0) {
           await cacheService.put(key, warningsData.slice());
           checkRuns.push(...warningsData.slice());
