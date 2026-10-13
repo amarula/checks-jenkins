@@ -202,6 +202,20 @@ export class RequestLRUCache<T> {
   }
 
   /**
+   * Forgets one entry, so that the next read of it is loaded again rather than
+   * served from what was stored earlier.
+   */
+  async delete(key: CacheKey): Promise<void> {
+    await this.init();
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(this.storeName, "readwrite");
+      transaction.objectStore(this.storeName).delete(key as IDBValidKey);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
+  /**
    * Clears all cached requests.
    */
   async clear(): Promise<void> {

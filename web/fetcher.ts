@@ -328,11 +328,7 @@ export class ChecksFetcher implements ChecksProvider {
         }
       })();
 
-      const runsKey: RunsCacheKey = [
-        jenkins.name,
-        changeData.changeNumber,
-        changeData.patchsetNumber,
-      ];
+      const runsKey: RunsCacheKey = ChecksFetcher.runsKeyOf(jenkins, changeData);
       const cachedEntry: CachedRuns | undefined =
         await cacheService.get(runsKey);
       // The cache outlives the page load, so its age is measured with the
@@ -512,7 +508,7 @@ export class ChecksFetcher implements ChecksProvider {
       this.expireReruns(monotonicNow);
 
       for (const run of data.runs) {
-        checkRuns.push(this.convert(jenkins, changeData.repo, run, changeKey));
+        checkRuns.push(this.convert(jenkins, changeData, run, changeKey));
       }
     }
 
@@ -801,6 +797,18 @@ export class ChecksFetcher implements ChecksProvider {
     return `${changeData.changeNumber}:${changeData.patchsetNumber}`;
   }
 
+  /**
+   * What the runs of a patchset are cached under. Built in one place, so that the
+   * entry a rerun drops is the one the next fetch reads.
+   */
+  private static runsKeyOf(jenkins: Config, changeData: ChangeData): RunsCacheKey {
+    return [
+      jenkins.name,
+      changeData.changeNumber,
+      changeData.patchsetNumber,
+    ];
+  }
+
   /** The pending-rerun state of one change view, created on first use. */
   private rerunState(changeKey: string): Map<string, number> {
     let state = this.triggeredReruns.get(changeKey);
@@ -825,7 +833,7 @@ export class ChecksFetcher implements ChecksProvider {
 
   convert(
     jenkins: Config,
-    repo: string,
+    changeData: ChangeData,
     run: JenkinsCheckRun,
     changeKey: string,
   ): CheckRun {
@@ -868,7 +876,7 @@ export class ChecksFetcher implements ChecksProvider {
         summary: action.summary,
         disabled: action.disabled || rerunPending,
         callback: () =>
-          this.rerun(jenkins, repo, action.url + "/index", runKey, changeKey),
+          this.rerun(jenkins, changeData, action.url + "/index", runKey),
       });
     }
     convertedRun.actions = actions;
@@ -1034,30 +1042,44 @@ export class ChecksFetcher implements ChecksProvider {
 
   private rerun(
     jenkins: Config,
-    repo: string,
+    changeData: ChangeData,
     url: string,
     runKey: string,
-    changeKey: string,
   ): Promise<ActionResult> {
-    if (runKey) this.rerunState(changeKey).set(runKey, performance.now());
-    return this.fetchFromJenkins(jenkins, repo, url, "POST")
-      .then((_) => {
-        return {
-          message: "Run triggered.",
-          shouldReload: true,
-        };
-      })
+    if (runKey) {
+      this.rerunState(ChecksFetcher.changeKeyOf(changeData)).set(
+        runKey,
+        performance.now(),
+      );
+    }
+    return this.fetchFromJenkins(jenkins, changeData.repo, url, "POST")
+      .then((_) => this.triggeredRun(jenkins, changeData))
       .catch((e) => {
         const msg: string = e.message;
         /* Redirect that is not to be considered as error */
         if (msg.includes("302")) {
-          return {
-            message: "Run triggered.",
-            shouldReload: true,
-          };
+          return this.triggeredRun(jenkins, changeData);
         }
         return { message: `Triggering the run failed: ${e.message}` };
       });
+  }
+
+  /**
+   * What a triggered rerun changes here, and what to tell the user: the cached
+   * runs of the patchset are the state of it before the trigger, without the
+   * build that was just started and, the stages being reported as results of
+   * their build, without its stages. The fetch that follows the click has to ask
+   * Jenkins for them rather than be served what the patchset reported before it.
+   */
+  private async triggeredRun(
+    jenkins: Config,
+    changeData: ChangeData,
+  ): Promise<ActionResult> {
+    await cacheService.delete(ChecksFetcher.runsKeyOf(jenkins, changeData));
+    return {
+      message: "Run triggered.",
+      shouldReload: true,
+    };
   }
 }
 

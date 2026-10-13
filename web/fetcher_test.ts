@@ -238,7 +238,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -299,7 +304,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -340,7 +350,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -389,7 +404,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -437,7 +457,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -487,7 +512,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -534,7 +564,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -586,7 +621,12 @@ suite("ChecksFetcher.convert", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       jenkinsRun,
       CHANGE_A,
     );
@@ -652,7 +692,12 @@ suite("ChecksFetcher rerun scoping", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       makeRun(),
       CHANGE_A,
     );
@@ -666,7 +711,12 @@ suite("ChecksFetcher rerun scoping", () => {
 
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 2,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       makeRun(),
       "123:2",
     );
@@ -677,7 +727,12 @@ suite("ChecksFetcher rerun scoping", () => {
   test("rerun click is recorded under its own change", async () => {
     const result = (fetcher as any).convert(
       config,
-      "my-repo",
+      {
+        changeNumber: 123,
+        patchsetNumber: 1,
+        commitMessage: "subject",
+        repo: "my-repo",
+      },
       makeRun(),
       CHANGE_A,
     );
@@ -701,6 +756,49 @@ suite("ChecksFetcher rerun scoping", () => {
     assert.isFalse(state.has("stale#2"));
     // A change view emptied by the expiry is forgotten, not kept around.
     assert.isUndefined((fetcher as any).triggeredReruns.get(CHANGE_B));
+  });
+
+  test("a rerun drops what was cached for the patchset", async () => {
+    // The runs of the patchset are read from the cache on the polls that follow
+    // within its lifetime, so the build a rerun started would be reported only
+    // once it expires, and the stages of the build it replaced until then.
+    const changeData = {
+      changeNumber: 123,
+      patchsetNumber: 5,
+      commitMessage: "subject",
+      repo: "my-repo",
+    };
+    let runs: JenkinsCheckRun[] = [makeRun({externalId: "test-job#1"})];
+    (fetcher as any).fetchConfig = () => Promise.resolve([config]);
+    (fetcher as any).toJson = (response: unknown) => Promise.resolve(response);
+    (fetcher as any).fetchFromJenkins = (
+      _jenkins: unknown,
+      _repo: string,
+      url: string,
+    ) => {
+      if (url.includes("gerrit-checks/runs")) return Promise.resolve({runs});
+      return Promise.resolve(null);
+    };
+
+    const first = await fetcher.fetch(changeData as any);
+    // The callback the plugin offers, which the click of the button invokes.
+    await (first.runs![0].actions![0] as any).callback();
+
+    // Jenkins now reports the build the rerun started, next to the old one.
+    runs = [
+      makeRun({externalId: "test-job#1"}),
+      makeRun({
+        attempt: 2,
+        externalId: "test-job#2",
+        status: RunStatus.RUNNING,
+      }),
+    ];
+    const second = await fetcher.fetch(changeData as any);
+
+    assert.isTrue(
+      second.runs?.some((run) => run.externalId === "test-job#2"),
+      "The fetch after the rerun asks Jenkins, not the cache of before it",
+    );
   });
 });
 
