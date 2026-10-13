@@ -82,7 +82,7 @@ The raw runs are cached before `computeTreeNames()` mutations to avoid storing a
 
 ### Flattened-tree pipeline naming
 
-`computeTreeNames()` (`web/fetcher.ts:546`) rewrites `checkName` in-place to visualize upstream/downstream pipeline structure directly in Gerrit's flat Checks UI table.
+`computeTreeNames()` (`web/fetcher.ts:919`) rewrites `checkName` in-place to visualize upstream/downstream pipeline structure directly in Gerrit's flat Checks UI table.
 
 The stages of a pipeline are not part of that tree: by default the Jenkins-side plugin reports them as results of the run of their pipeline — their external ID is the key of that run followed by '#' and the ID of the stage's flow node — so they appear inside the run and not as rows of their own. Where the plugin is configured to report a stage as a run of its own, nested below its pipeline, the naming handles it as well (`isStageRunId()`), as it does for the older plugin versions that always did.
 
@@ -109,21 +109,15 @@ The Jenkins-side `gerrit-checks-api-plugin` encodes relationships in `externalId
 | **Emoji** | `🌳` if the job has downstream children (someone references it as parent), `🍃` if it has none. |
 | **Original name** | The unmodified `checkName` from Jenkins. |
 
+The label belongs to the **check**, not to the run. Gerrit identifies a run by its check name, change, patchset and attempt, and renders one row per check — the build of the highest attempt — the other builds being reachable as attempts of it. Every run that carries the name of a check therefore gets the label of that check, whether or not the build it reported had children of its own; the depth, the tree and the emoji are taken from the newest of the check's builds that is part of the graph. Naming a single build apart from the others would give the job a second check, with a latest attempt of its own, and the state of the build that a rerun replaced would be reported as the current one.
+
 #### Scope
 
-Only runs that participate in a parent→child relationship (as either parent or child) get the prefix. Independent runs in the same batch, and all enrichment runs (warnings-ng tools, JUnit, Code Coverage), keep their original names unchanged.
+A check is named when **any** of its runs participates in a parent→child relationship (as either parent or child); all of its runs then carry the same label. Checks with no relationships at all in the batch, and all enrichment runs (warnings-ng tools, JUnit, Code Coverage), keep their original names unchanged.
 
 #### Multiple independent trees
 
 When multiple independent pipeline trees appear in the same batch (e.g. two separate upstream pipelines each with their own downstream jobs), runs are grouped by tree first, then sorted by depth within each tree. Tree order follows the first-appearance order of each tree's root in the input from Jenkins. This keeps each pipeline's upstream/downstream chain visually together in the flat list.
-
-Run labels visible to the user in each component of the pipeline tree are:
-
-| Component | Example |
-|---|---|
-| **Number** | `01`, `02`, `03` — depth within **that tree**, zero-padded to 2 digits |
-| **Emoji** | 🌳 if the job has downstream children, 🍃 if it is terminal |
-| **Original name** | The check name assigned by Jenkins |
 
 #### Example output
 

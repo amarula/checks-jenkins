@@ -904,6 +904,17 @@ export class ChecksFetcher implements ChecksProvider {
    * When multiple independent trees exist in the same batch, runs are grouped
    * by tree first, then sorted by depth within each tree.  This keeps each
    * pipeline's upstream/downstream chain visually together in the flat list.
+   *
+   * The label belongs to the check, not to the run.  Gerrit identifies a run by
+   * its check name, change, patchset and attempt, and renders one row per check,
+   * the build of the highest attempt, the others being reachable as attempts of
+   * it.  A label derived from a single run — the newest build of a job is the
+   * only one whose stages are reported, and those stages are its children —
+   * would name that build apart from the other builds of the job and give it two
+   * checks, each with a latest attempt of its own: the state of a build that a
+   * rerun replaced would then be reported as the current one.  Every run that
+   * carries the name of a check therefore gets the label of that check, whether
+   * or not the build it reported had children of its own.
    */
   private computeTreeNames(runs: JenkinsCheckRun[]): void {
     if (!runs || runs.length === 0) return;
@@ -983,31 +994,55 @@ export class ChecksFetcher implements ChecksProvider {
       return d;
     };
 
-    // 8. Apply the new checkName only to runs that are part of the tree.
-    //    Runs without a valid externalId or outside the graph keep their
-    //    original name.
+    // 8. Apply the new checkName per check, to every run that carries its name.
+    //    A check is a job, reported once per build and told apart by its attempt,
+    //    so all of its builds have to end up with the same label.  The depth, the
+    //    tree and the emoji are taken from the newest of its builds that is part
+    //    of the graph — the one whose stages make it a tree — and the emoji is
+    //    the tree when any of them has children.  A check none of whose builds
+    //    is part of the graph keeps its original name.
     interface RunMeta {
       depth: number;
       treeIndex: number;
     }
-    const runMeta = new Map<JenkinsCheckRun, RunMeta>();
+    const representatives = new Map<string, number>();
+    const checksWithChildren = new Set<string>();
     for (let i = 0; i < runs.length; i++) {
       const { runKey } = parsed[i];
-      if (!runKey || !inGraph.has(runKey)) continue;
+      if (!runKey) continue;
+      if (hasChildren.has(runKey)) {
+        checksWithChildren.add(runs[i].checkName);
+      }
+      if (!inGraph.has(runKey)) continue;
+      const known = representatives.get(runs[i].checkName);
+      if (known === undefined || isNewer(runs[i], runs[known])) {
+        representatives.set(runs[i].checkName, i);
+      }
+    }
+    const labelled = new Map<string, { label: string; meta: RunMeta }>();
+    for (const [name, index] of representatives) {
+      const { runKey } = parsed[index];
       const meta: RunMeta = {
         depth: computeDepth(runKey),
         treeIndex: treeIndex.get(findRoot(runKey))!,
       };
-      runMeta.set(runs[i], meta);
       const level = String(meta.depth + 1).padStart(2, "0");
-      const emoji = hasChildren.has(runKey)
+      const emoji = checksWithChildren.has(name)
         ? ChecksFetcher.TREE_EMOJI
         : ChecksFetcher.LEAF_EMOJI;
-      runs[i].checkName = `${level} ${emoji} ${runs[i].checkName}`;
+      labelled.set(name, { label: `${level} ${emoji} `, meta });
+    }
+    const runMeta = new Map<JenkinsCheckRun, RunMeta>();
+    for (const run of runs) {
+      const named = labelled.get(run.checkName);
+      if (named === undefined) continue;
+      runMeta.set(run, named.meta);
+      run.checkName = `${named.label}${run.checkName}`;
     }
 
-    // 9. Stable-sort: in-graph runs first, grouped by tree, then by depth
-    //    within each tree.  Non-graph runs stay at the end.
+    // 9. Stable-sort: the runs of a named check first, grouped by tree, then by
+    //    depth within each tree, the builds of a check staying together.
+    //    Unnamed runs stay at the end.
     runs.sort((a, b) => {
       const ma = runMeta.get(a);
       const mb = runMeta.get(b);
