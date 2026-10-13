@@ -32,9 +32,16 @@ export default {
     // Everything the runner loads is instrumented, dependencies included, so
     // without this the report is mostly chai and mocha.  The tests are left
     // out too: the number should describe the plugin's sources.
+    //
+    // Both are anchored at the working directory with './', which makes the
+    // runner resolve them against it before matching: a pattern that starts
+    // with '*' is used as it is, and '**' does not cross a directory whose name
+    // starts with a dot.  Under bazel every path is below
+    // '/home/<user>/.cache/bazel/...', so '**/node_modules/**' matched nothing
+    // at all and the report was the dependencies and the tests.
     exclude: [
-      ...(baseConfig.coverageConfig?.exclude || ['**/node_modules/**']),
-      '**/*_test.js',
+      ...(baseConfig.coverageConfig?.exclude || ['./**/node_modules/**']),
+      './**/*_test.js',
     ],
     // lcov is web-test-runner's default and is what the pipeline publishes.
     // Cobertura is deliberately not requested: v8-to-istanbul emits one
